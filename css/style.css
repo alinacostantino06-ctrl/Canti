@@ -1,0 +1,603 @@
+/* =========================================================
+   Stile "libretto liturgico": carta avorio, bordeaux e oro,
+   caratteri con grazie come in un libro.
+   ========================================================= */
+
+/* ---------- Colori e misure di base (modificabili qui) ---------- */
+:root {
+  --carta: #f7f1e3;        /* sfondo pagina */
+  --carta-chiara: #fffaf0; /* campi del modulo */
+  --inchiostro: #2b2118;   /* testo */
+  --tenue: #7a6a58;        /* testi secondari */
+  --bordeaux: #6e1a22;     /* barre e titoli */
+  --oro: #c9a24a;          /* decorazioni */
+  --rubrica: #a3242b;      /* accordi: il rosso dei libri liturgici */
+  --filetto: #dccfb2;      /* linee sottili */
+  --titoli: var(--bordeaux); /* titoli ed etichette */
+  --pericolo: #a3242b;     /* pulsanti che cancellano */
+  --altezza-nav: 74px;
+
+  --font-libro: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  /* Carattere a spaziatura fissa: tiene gli accordi allineati sopra le sillabe */
+  --font-canto: "Courier New", Courier, ui-monospace, monospace;
+
+  font-size: 20px; /* testo grande: tutto il resto è in "rem" e scala da qui */
+}
+
+/* Tema scuro: si usa se lo sceglie l'interruttore (data-tema="scuro")
+   oppure se il telefono è in modalità scura e non è stato scelto "chiaro". */
+:root[data-tema="scuro"] {
+  --carta: #1c1714;
+  --carta-chiara: #26201b;
+  --inchiostro: #efe6d6;
+  --tenue: #a8998a;
+  --bordeaux: #5a141b;
+  --oro: #d9b45e;
+  --rubrica: #e8a35a;
+  --filetto: #3d332b;
+  --titoli: var(--oro);
+  --pericolo: #9b2c2c;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-tema="chiaro"]) {
+    --carta: #1c1714;
+    --carta-chiara: #26201b;
+    --inchiostro: #efe6d6;
+    --tenue: #a8998a;
+    --bordeaux: #5a141b;
+    --oro: #d9b45e;
+    --rubrica: #e8a35a;
+    --filetto: #3d332b;
+    --titoli: var(--oro);
+    --pericolo: #9b2c2c;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--carta);
+  color: var(--inchiostro);
+  font-family: var(--font-libro);
+  line-height: 1.45;
+  /* spazio per la barra in basso, così non copre l'ultimo canto */
+  padding-bottom: calc(var(--altezza-nav) + env(safe-area-inset-bottom));
+}
+
+[hidden] { display: none !important; }
+
+/* ---------- Barra in alto ---------- */
+.barra-alta {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 1rem;
+  padding-top: calc(0.7rem + env(safe-area-inset-top));
+  background: var(--bordeaux);
+  color: #f7f1e3;
+  border-bottom: 3px double var(--oro);
+}
+.croce {
+  color: var(--oro);
+  font-size: 1.3rem;
+}
+.barra-alta h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btn-icona {
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid var(--oro);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--oro);
+  font-family: var(--font-libro);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+/* Quando c'è il pulsante "indietro", la croce si nasconde per fare spazio */
+#btn-indietro:not([hidden]) + .croce { display: none; }
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 1rem 1.2rem;
+}
+
+/* ---------- Elenco canti, come l'indice di un libretto ---------- */
+.elenco {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.elenco .lettera {
+  margin: 1.2rem 0 0.2rem;
+  color: var(--titoli);
+  font-size: 1.4rem;
+  font-weight: 700;
+  border-bottom: 1px solid var(--oro);
+}
+.elenco .lettera:first-child { margin-top: 0.2rem; }
+.elenco button {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.85rem 0.2rem;
+  border: 0;
+  border-bottom: 1px dotted var(--filetto);
+  background: none;
+  color: var(--inchiostro);
+  font: inherit;
+  font-size: 1.15rem;
+  text-align: left;
+  cursor: pointer;
+}
+.elenco button::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--oro);
+  font-size: 1.3rem;
+}
+.vuoto {
+  margin-top: 3rem;
+  text-align: center;
+  font-style: italic;
+  color: var(--tenue);
+}
+
+/* ---------- Importazione da PDF ---------- */
+.importa { text-align: center; }
+.btn-pdf {
+  display: inline-block;
+  padding: 0.9rem 1.6rem;
+  border: 2px solid var(--titoli);
+  border-radius: 999px;
+  color: var(--titoli);
+  font-weight: 700;
+  cursor: pointer;
+}
+.stato-pdf {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--tenue);
+}
+.stato-pdf.errore { color: var(--rubrica); font-style: normal; }
+
+.separatore {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 1.4rem 0;
+  color: var(--tenue);
+  font-size: 0.8rem;
+  font-variant: small-caps;
+  letter-spacing: 0.05em;
+}
+.separatore::before,
+.separatore::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--filetto);
+}
+
+/* ---------- Modulo di aggiunta ---------- */
+.modulo label {
+  display: block;
+  margin-bottom: 1rem;
+  color: var(--titoli);
+  font-variant: small-caps;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.modulo input,
+.modulo select,
+.modulo textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.7rem;
+  border: 1px solid var(--filetto);
+  border-radius: 6px;
+  background: var(--carta-chiara);
+  color: var(--inchiostro);
+  font: inherit;
+  font-variant: normal;
+  font-weight: normal;
+  letter-spacing: normal;
+}
+.modulo textarea {
+  font-family: var(--font-canto);
+  font-size: 0.85rem;
+}
+.btn-grande {
+  width: 100%;
+  padding: 1rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--bordeaux);
+  color: #f7f1e3;
+  font: inherit;
+  font-weight: 700;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+  box-shadow: inset 0 0 0 2px var(--oro);
+  cursor: pointer;
+}
+
+/* ---------- Visualizzazione canto ---------- */
+.titolo-canto {
+  margin: 0.4rem 0 0;
+  color: var(--titoli);
+  font-size: 1.5rem;
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.fregio {
+  margin: 0.2rem 0 1rem;
+  color: var(--oro);
+  text-align: center;
+}
+/* Canto CON accordi: carattere a spaziatura fissa e righe che NON vanno a capo,
+   altrimenti gli accordi perdono l'allineamento. Il carattere si adatta alla
+   larghezza dello schermo e, se una riga è troppo lunga, si scorre di lato. */
+.testo-canto.con-accordi {
+  font-family: var(--font-canto);
+  font-size: clamp(14px, 4.2vw, 1.1rem);
+  line-height: 1.35;
+  overflow-x: auto;
+}
+.con-accordi .riga { white-space: pre; min-height: 1.35em; }
+/* Accordo + testo sotto restano uniti; tra una coppia e l'altra c'è respiro */
+.con-accordi .coppia { margin-bottom: 0.45em; }
+.con-accordi .stacco { height: 1em; }
+.riga-accordi {
+  color: var(--rubrica);
+  font-weight: 700;
+}
+
+/* Canto SENZA accordi: testo centrato con il carattere del libretto */
+.testo-canto.senza-accordi {
+  font-family: var(--font-libro);
+  font-size: 1.1rem;
+  line-height: 1.6;
+  text-align: center;
+}
+.senza-accordi .riga { white-space: pre-line; }
+.senza-accordi .stacco { height: 1.1em; }
+
+/* Avviso nel modulo: accordi trovati o no */
+.info-accordi {
+  margin: -0.6rem 0 1rem;
+  color: var(--tenue);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+/* ---------- Barra di navigazione in basso ---------- */
+.barra-bassa {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  height: calc(var(--altezza-nav) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--bordeaux);
+  border-top: 3px double var(--oro);
+}
+.barra-bassa button {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  border: 0;
+  background: none;
+  color: rgba(247, 241, 227, 0.65);
+  font: inherit;
+  cursor: pointer;
+}
+.barra-bassa b {
+  font-size: 1.4rem;
+  font-weight: normal;
+  line-height: 1;
+}
+.barra-bassa span {
+  font-size: 0.8rem;
+  font-variant: small-caps;
+  letter-spacing: 0.05em;
+}
+.barra-bassa .attivo {
+  color: var(--oro);
+  font-weight: 700;
+}
+
+/* ---------- Cartelle ---------- */
+.elenco .voce-cartella { font-weight: 700; }
+.elenco .voce-cartella::before { content: "📁"; }
+#elenco-cartelle:not(:empty) { margin-bottom: 0.8rem; }
+
+.comandi {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+/* Pulsante secondario, piccolo e con il bordo */
+.btn-piccolo {
+  display: inline-block;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--filetto);
+  border-radius: 999px;
+  background: var(--carta-chiara);
+  color: var(--inchiostro);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.btn-tratteggiato {
+  display: block;
+  width: 100%;
+  margin-top: 1.4rem;
+  padding: 0.9rem;
+  border: 2px dashed var(--filetto);
+  border-radius: 6px;
+  background: none;
+  color: var(--tenue);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ---------- File allegati (audio e PDF) ---------- */
+.allegati {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+}
+.allegato {
+  margin-bottom: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--filetto);
+  border-radius: 6px;
+  background: var(--carta-chiara);
+}
+.allegato-riga {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.allegato-nome {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--inchiostro);
+  font-size: 0.95rem;
+}
+a.allegato-nome { color: var(--titoli); font-weight: 700; }
+.btn-mini {
+  flex: none;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--filetto);
+  border-radius: 50%;
+  background: var(--carta);
+  color: var(--inchiostro);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.allegato audio {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+#schermata-canto > .btn-piccolo { margin-bottom: 1.2rem; }
+
+/* Nel modulo i "label" sono titoli dei campi: quelli usati come pulsanti tornano normali */
+.modulo label.btn-piccolo {
+  display: inline-block;
+  margin: 0;
+  color: var(--inchiostro);
+  font-variant: normal;
+  font-weight: normal;
+  letter-spacing: normal;
+}
+.campo { margin-bottom: 1.2rem; }
+.etichetta {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--titoli);
+  font-variant: small-caps;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- Finestrella per i nomi ---------- */
+.dialogo {
+  width: min(92vw, 420px);
+  padding: 1.2rem;
+  border: 1px solid var(--oro);
+  border-radius: 10px;
+  background: var(--carta);
+  color: var(--inchiostro);
+}
+.dialogo::backdrop { background: rgba(20, 10, 5, 0.55); }
+.dialogo p {
+  margin: 0 0 0.7rem;
+  font-weight: 700;
+}
+.dialogo input {
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid var(--filetto);
+  border-radius: 6px;
+  background: var(--carta-chiara);
+  color: var(--inchiostro);
+  font: inherit;
+}
+.dialogo-azioni {
+  display: flex;
+  flex-direction: row-reverse; /* OK a destra, anche se nel codice viene prima */
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+.dialogo-azioni .btn-grande { width: auto; padding: 0.6rem 1.4rem; }
+
+/* ---------- Cestino ---------- */
+.nota-cestino {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.9rem;
+  border-left: 3px solid var(--oro);
+  background: var(--carta-chiara);
+  color: var(--tenue);
+  font-size: 0.85rem;
+}
+.voce-cestino .dettaglio {
+  margin-top: 0.15rem;
+  color: var(--tenue);
+  font-size: 0.8rem;
+}
+.voce-cestino .scadenza { font-style: italic; }
+.azioni-cestino {
+  margin: 0.7rem 0 0;
+  align-items: center;
+}
+.azioni-cestino .btn-grande {
+  width: auto;
+  padding: 0.55rem 1.1rem;
+}
+
+/* Pulsante per le azioni che cancellano */
+.btn-grande.pericolo {
+  background: var(--pericolo);
+  box-shadow: none;
+}
+
+/* ---------- Finestrella con più scelte ---------- */
+.scelta-opzioni {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.scelta-opzioni .btn-grande { font-variant: normal; letter-spacing: normal; }
+
+/* ---------- Avviso a comparsa ---------- */
+.avviso {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--altezza-nav) + env(safe-area-inset-bottom) + 0.8rem);
+  z-index: 20;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 2rem);
+  padding: 0.7rem 1.1rem;
+  border: 1px solid var(--oro);
+  border-radius: 8px;
+  background: var(--inchiostro);
+  color: var(--carta);
+  font-size: 0.85rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+/* Comandi in fondo alla pagina del canto, separati da un filetto */
+.comandi-fondo {
+  justify-content: center;
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--filetto);
+}
+
+/* ---------- Pagina iniziale ---------- */
+/* Copre tutto lo schermo (anche le barre); resta rossa sia nel tema chiaro che scuro */
+.pagina-iniziale {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3rem;
+  padding: 2rem 1rem;
+  background: radial-gradient(circle at 50% 42%, #8f2530 0%, #6e1a22 55%, #4f1118 100%);
+  transition: opacity 0.5s ease, visibility 0.5s;
+}
+/* Quando si entra nell'app la pagina sfuma via */
+.pagina-iniziale.chiusa {
+  opacity: 0;
+  visibility: hidden;
+}
+.croce-grande {
+  color: #d9b45e;
+  font-size: min(42vw, 13rem);
+  line-height: 1;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+}
+.btn-entra {
+  padding: 1rem 2.6rem;
+  border: 2px solid #d9b45e;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.12);
+  color: #f7f1e3;
+  font-family: var(--font-libro);
+  font-size: 1.3rem;
+  font-weight: 700;
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.btn-entra:active { background: rgba(0, 0, 0, 0.25); }
+.btn-installa {
+  margin-top: -1.8rem;
+  padding: 0.6rem 1.4rem;
+  border: 1px solid rgba(217, 180, 94, 0.6);
+  border-radius: 999px;
+  background: none;
+  color: #e9d9b4;
+  font-family: var(--font-libro);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.dialogo p { white-space: pre-line; }
+
+/* ---------- Pulsanti A− / A+ per la grandezza del testo ---------- */
+.zoom-testo {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto; /* a destra, sulla stessa riga di "Aggiungi audio" */
+}
+.zoom-testo .btn-mini {
+  width: 2.5rem;
+  height: 2.5rem;
+  font-family: var(--font-libro);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.zoom-testo .btn-mini.grande { font-size: 1.1rem; }
+.zoom-testo .btn-mini:disabled { opacity: 0.35; cursor: default; }
+#valore-zoom {
+  min-width: 3em;
+  color: var(--tenue);
+  font-size: 0.8rem;
+  text-align: center;
+}

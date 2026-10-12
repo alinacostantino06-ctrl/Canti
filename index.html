@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#6e1a22">
+  <title>Canta con noi</title>
+  <!-- Per installare l'app: nome, colori e icone -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Canti">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    // Applica subito il tema scelto (chiaro/scuro), prima che la pagina appaia,
+    // così non si vede un "lampo" del tema sbagliato.
+    try {
+      var tema = localStorage.getItem('tema');
+      if (tema) document.documentElement.dataset.tema = tema;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+
+  <!-- Pagina iniziale: copre tutto finché non si tocca "Canta con noi" -->
+  <section id="pagina-iniziale" class="pagina-iniziale">
+    <div class="croce-grande" aria-hidden="true">✠</div>
+    <button id="btn-entra" class="btn-entra">Canta con noi</button>
+    <!-- Compare solo se l'app si può installare e non è già installata -->
+    <button id="btn-installa" class="btn-installa" hidden>⬇ Scarica l'app</button>
+  </section>
+
+  <!-- Intestazione: titolo della sezione + pulsanti di azione -->
+  <header class="barra-alta">
+    <button id="btn-indietro" class="btn-icona" hidden aria-label="Indietro">‹</button>
+    <span class="croce" aria-hidden="true">✠</span>
+    <h1 id="titolo">Canti prove</h1>
+    <button id="btn-tema" class="btn-icona" aria-label="Cambia tema chiaro/scuro"></button>
+    <button id="btn-aggiungi" class="btn-icona" aria-label="Aggiungi canto">+</button>
+  </header>
+
+  <main>
+    <!-- Schermata 1: elenco dei canti -->
+    <section id="schermata-elenco">
+      <!-- Comandi visibili solo dentro una cartella -->
+      <div id="comandi-cartella" class="comandi" hidden>
+        <button id="btn-rinomina-cartella" class="btn-piccolo">✎ Rinomina cartella</button>
+        <button id="btn-elimina-cartella" class="btn-piccolo">🗑 Elimina cartella</button>
+      </div>
+
+      <ul id="elenco-cartelle" class="elenco"></ul>
+      <ul id="elenco" class="elenco"></ul>
+      <p id="elenco-vuoto" class="vuoto" hidden>
+        Nessun canto qui.<br>Tocca <strong>+</strong> per aggiungerne uno.
+      </p>
+
+      <!-- Visibile solo fuori dalle cartelle -->
+      <button id="btn-nuova-cartella" class="btn-tratteggiato">📁 Nuova cartella</button>
+    </section>
+
+    <!-- Schermata 2: modulo per aggiungere un canto (a mano o da PDF) -->
+    <section id="schermata-modulo" hidden>
+      <div id="blocco-importa">
+      <div class="importa">
+        <label class="btn-pdf">
+          📄 Carica PDF
+          <input id="file-pdf" type="file" accept="application/pdf,.pdf" hidden>
+        </label>
+        <p id="stato-pdf" class="stato-pdf">
+          Il testo verrà letto in automatico: controllalo e poi salva.
+        </p>
+      </div>
+
+      <div class="separatore"><span>oppure scrivilo a mano</span></div>
+      </div>
+
+      <form id="modulo" class="modulo">
+        <label>
+          Titolo
+          <input name="titolo" required autocomplete="off">
+        </label>
+        <label>
+          Sezione
+          <select name="sezione">
+            <option value="prove">Canti prove</option>
+            <option value="chiesa">Canti chiesa</option>
+          </select>
+        </label>
+        <label>
+          Cartella
+          <select name="cartella"></select>
+        </label>
+        <label>
+          Testo con accordi
+          <textarea name="testo" rows="14" spellcheck="false"
+            placeholder="Scrivi gli accordi sulla riga sopra il testo, ad esempio:&#10;&#10;DO        SOL&#10;Alleluia, alleluia&#10;&#10;Oppure scrivi solo il testo, senza accordi."></textarea>
+        </label>
+        <p id="info-accordi" class="info-accordi"></p>
+        <div id="campo-allegati" class="campo">
+          <span class="etichetta">Audio e PDF allegati</span>
+          <ul id="file-in-attesa" class="allegati"></ul>
+          <label class="btn-piccolo">
+            🎵 Aggiungi audio
+            <input id="file-audio-modulo" type="file" accept="audio/*" multiple hidden>
+          </label>
+        </div>
+        <button id="btn-salva" type="submit" class="btn-grande">Salva canto</button>
+      </form>
+    </section>
+
+    <!-- Schermata 3: visualizzazione di un canto -->
+    <section id="schermata-canto" hidden>
+      <h2 id="titolo-canto" class="titolo-canto"></h2>
+      <div class="fregio" aria-hidden="true">❦</div>
+
+      <ul id="allegati-canto" class="allegati"></ul>
+      <div class="comandi">
+        <label class="btn-piccolo">
+          🎵 Aggiungi audio
+          <input id="file-audio-canto" type="file" accept="audio/*" multiple hidden>
+        </label>
+        <!-- Grandezza del testo -->
+        <div class="zoom-testo">
+          <button id="btn-testo-meno" class="btn-mini" aria-label="Testo più piccolo">A−</button>
+          <span id="valore-zoom">100%</span>
+          <button id="btn-testo-piu" class="btn-mini grande" aria-label="Testo più grande">A+</button>
+        </div>
+      </div>
+
+      <div id="testo-canto" class="testo-canto"></div>
+
+      <!-- In fondo, così aprendo il canto si vede subito il testo -->
+      <div class="comandi comandi-fondo">
+        <button id="btn-modifica-canto" class="btn-piccolo">✎ Modifica</button>
+        <button id="btn-sposta-canto" class="btn-piccolo">📁 Sposta</button>
+        <button id="btn-elimina-canto" class="btn-piccolo">🗑 Elimina canto</button>
+      </div>
+    </section>
+
+    <!-- Schermata 4: cestino -->
+    <section id="schermata-cestino" hidden>
+      <p class="nota-cestino">
+        Le cose eliminate restano qui per <strong>3 giorni</strong>, poi vengono
+        cancellate per sempre. Tocca <strong>↺ Ripristina</strong> per rimetterle al loro posto.
+      </p>
+      <ul id="elenco-cestino" class="allegati"></ul>
+      <p id="cestino-vuoto" class="vuoto" hidden>Il cestino è vuoto.</p>
+      <button id="btn-svuota-cestino" class="btn-tratteggiato" hidden>Svuota il cestino adesso</button>
+    </section>
+  </main>
+
+  <!-- Finestrella per scrivere un nome (nuova cartella, rinomina file, ecc.) -->
+  <dialog id="dialogo-nome" class="dialogo">
+    <form method="dialog">
+      <p id="dialogo-domanda"></p>
+      <input id="dialogo-valore" autocomplete="off">
+      <!-- "OK" viene prima nel codice così il tasto Invio conferma; a schermo appare a destra -->
+      <div class="dialogo-azioni">
+        <button value="ok" class="btn-grande">OK</button>
+        <button value="annulla" class="btn-piccolo">Annulla</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Finestrella con più scelte (es. come eliminare una cartella) -->
+  <dialog id="dialogo-scelta" class="dialogo">
+    <p id="scelta-domanda"></p>
+    <div id="scelta-opzioni" class="scelta-opzioni"></div>
+  </dialog>
+
+  <!-- Avviso che compare per qualche secondo in basso -->
+  <div id="avviso" class="avviso" role="status" hidden></div>
+
+  <!-- Barra di navigazione in basso -->
+  <nav class="barra-bassa">
+    <button data-sezione="prove" class="attivo"><b aria-hidden="true">♪</b><span>Canti prove</span></button>
+    <button data-sezione="chiesa"><b aria-hidden="true">✝</b><span>Canti chiesa</span></button>
+    <button data-sezione="cestino"><b aria-hidden="true">🗑&#xFE0E;</b><span>Cestino</span></button>
+  </nav>
+
+  <script src="lib/pdf.min.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/pdf-import.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

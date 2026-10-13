@@ -1134,6 +1134,50 @@ $('btn-esci').addEventListener('click', async () => {
 
 $('btn-vai-accesso').addEventListener('click', () => apriIniziale(true));
 
+// Persone bloccate nei gruppi: si possono sbloccare
+$('btn-bloccati').addEventListener('click', async () => {
+  let bloccati;
+  try {
+    bloccati = await Gruppi.bloccati();
+  } catch (err) {
+    return avviso('⚠ ' + err.message);
+  }
+  if (!bloccati.length) return chiediScelta('Non hai bloccato nessuno.', [], 'Chiudi');
+  const chi = await chiediScelta('Persone bloccate: non vedi i canti che condividono.\n\nTocca un nome per sbloccarlo.',
+    bloccati.map((b) => ({ valore: b, testo: '🚫 ' + (b.nome || 'Senza nome') })), 'Chiudi');
+  if (!chi) return;
+  try {
+    await Gruppi.sblocca(chi.bloccato_id);
+    avviso(`Hai sbloccato ${chi.nome || 'questa persona'}.`);
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+});
+
+// Elimina il mio account (requisito di Google Play)
+$('btn-elimina-account').addEventListener('click', async () => {
+  const scelta = await chiediScelta(
+    'Eliminare per sempre il tuo account?\n\n' +
+    'Verranno cancellati: l\'account, tutti i tuoi canti e i loro file (online e su questo dispositivo), ' +
+    'i canti che hai condiviso nei gruppi e i gruppi che hai creato (anche per le altre persone).\n\n' +
+    'Non si potrà tornare indietro.',
+    [{ valore: 'si', testo: 'Sì, elimina il mio account', pericolo: true }]);
+  if (!scelta) return;
+  const password = await chiediNome('Per sicurezza, scrivi la tua password', '', { password: true });
+  if (!password) return;
+  avviso('Eliminazione in corso…');
+  try {
+    await Sync.eliminaAccount(password);
+    sezioneCorrente = 'prove';
+    cartellaCorrente = null;
+    mostraElenco();
+    apriIniziale();
+    avviso('Il tuo account e tutti i tuoi dati sono stati eliminati.');
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+});
+
 // ---------- Gruppi: condividere i canti ----------
 
 const URL_APP = location.origin + location.pathname;
@@ -1338,26 +1382,77 @@ function disegnaChat(lista, salvati) {
       const salva = crea('button', 'btn-piccolo salva', salvati.has(c.id) ? '✓ Salvato' : '⬇ Salva nei miei canti');
       salva.addEventListener('click', () => salvaCondiviso(c, salva));
       azioni.append(salva);
+      // ⋯ : segnala, blocca e (per chi ha creato il gruppo) togli dalla chat
+      const altro = crea('button', 'btn-mini', '⋯');
+      altro.title = 'Altre azioni';
+      altro.setAttribute('aria-label', 'Altre azioni: segnala o blocca');
+      altro.addEventListener('click', () => azioniSuCantoAltrui(c));
+      azioni.append(altro);
     } else {
       const togli = crea('button', 'btn-mini', '🗑');
       togli.title = 'Togli dalla chat';
-      togli.addEventListener('click', async () => {
-        const scelta = await chiediScelta(`Togliere «${c.titolo}» dalla chat del gruppo?\n\n` +
-          'Chi l\'ha già salvato lo tiene; il tuo canto resta tra i tuoi canti.',
-          [{ valore: 'togli', testo: 'Togli dalla chat', pericolo: true }]);
-        if (!scelta) return;
-        try {
-          await Gruppi.elimina(c);
-          caricaChat();
-        } catch (err) {
-          avviso('⚠ ' + err.message);
-        }
-      });
+      togli.addEventListener('click', () => togliDallaChat(c, 'Chi l\'ha già salvato lo tiene; il tuo canto resta tra i tuoi canti.'));
       azioni.append(togli);
     }
     scheda.append(azioni);
     li.append(scheda);
     ul.append(li);
+  }
+}
+
+async function togliDallaChat(c, spiegazione) {
+  const scelta = await chiediScelta(`Togliere «${c.titolo}» dalla chat del gruppo?\n\n${spiegazione}`,
+    [{ valore: 'togli', testo: 'Togli dalla chat', pericolo: true }]);
+  if (!scelta) return;
+  try {
+    await Gruppi.elimina(c);
+    caricaChat();
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+}
+
+// Menu ⋯ su un canto condiviso da un'altra persona
+async function azioniSuCantoAltrui(c) {
+  const opzioni = [
+    { valore: 'segnala', testo: '⚑ Segnala questo canto' },
+    { valore: 'blocca', testo: `🚫 Blocca ${c.autore}` },
+  ];
+  if (Gruppi.sonoCreatore(gruppoCorrente)) {
+    opzioni.push({ valore: 'togli', testo: '🗑 Togli dalla chat (sei il moderatore)', pericolo: true });
+  }
+  const scelta = await chiediScelta(`«${c.titolo}», condiviso da ${c.autore}`, opzioni);
+
+  if (scelta === 'segnala') {
+    const motivo = await chiediScelta('Perché lo segnali?', [
+      { valore: 'Contenuto offensivo o inappropriato', testo: 'Contenuto offensivo o inappropriato' },
+      { valore: "Viola i diritti d'autore", testo: "Viola i diritti d'autore" },
+      { valore: 'Spam o pubblicità', testo: 'Spam o pubblicità' },
+      { valore: 'Altro', testo: 'Altro' },
+    ]);
+    if (!motivo) return;
+    try {
+      await Gruppi.segnala(c, motivo);
+      avviso('Grazie: la segnalazione è stata inviata e questo canto non lo vedrai più.');
+      caricaChat();
+    } catch (err) {
+      avviso('⚠ ' + err.message);
+    }
+  } else if (scelta === 'blocca') {
+    const conferma = await chiediScelta(
+      `Bloccare ${c.autore}?\n\nNon vedrai più i canti che condivide, in nessun gruppo. ` +
+      'Non riceverà nessun avviso. Puoi sbloccare quando vuoi da Account → Persone bloccate.',
+      [{ valore: 'si', testo: `🚫 Blocca ${c.autore}`, pericolo: true }]);
+    if (!conferma) return;
+    try {
+      await Gruppi.blocca(c.user_id, c.autore);
+      avviso(`Hai bloccato ${c.autore}.`);
+      caricaChat();
+    } catch (err) {
+      avviso('⚠ ' + err.message);
+    }
+  } else if (scelta === 'togli') {
+    togliDallaChat(c, 'Come moderatore puoi togliere i canti inappropriati. Chi l\'ha già salvato lo tiene.');
   }
 }
 
@@ -1507,9 +1602,55 @@ $('btn-membri').addEventListener('click', async () => {
     return avviso('⚠ ' + err.message);
   }
   const elencoNomi = membri.map((m) => '• ' + m.nome + (m.user_id === Sync.utente.id ? ' (tu)' : '')).join('\n');
-  const scelta = await chiediScelta(`Nel gruppo «${g.nome}» ci sono:\n\n${elencoNomi}\n\nCodice per entrare: ${g.codice}`,
-    [{ valore: 'esci', testo: 'Esci dal gruppo', pericolo: true }], 'Chiudi');
+  const moderatore = Gruppi.sonoCreatore(g);
+  const opzioni = [];
+  if (moderatore) {
+    opzioni.push({ valore: 'rimuovi', testo: '👤 Rimuovi una persona dal gruppo' });
+    opzioni.push({ valore: 'codice', testo: '🔑 Cambia il codice del gruppo' });
+  }
+  opzioni.push({ valore: 'esci', testo: 'Esci dal gruppo', pericolo: true });
+  const scelta = await chiediScelta(
+    `Nel gruppo «${g.nome}» ci sono:\n\n${elencoNomi}\n\nCodice per entrare: ${g.codice}` +
+    (moderatore ? '\n\nHai creato tu questo gruppo: ne sei il moderatore.' : ''),
+    opzioni, 'Chiudi');
   if (!scelta) return;
+
+  if (scelta === 'rimuovi') {
+    const altri = membri.filter((m) => m.user_id !== Sync.utente.id);
+    if (!altri.length) return avviso('Nel gruppo per ora ci sei solo tu.');
+    const chi = await chiediScelta('Chi vuoi rimuovere dal gruppo?',
+      altri.map((m) => ({ valore: m, testo: '👤 ' + m.nome })));
+    if (!chi) return;
+    const conferma = await chiediScelta(
+      `Rimuovere ${chi.nome} dal gruppo?\n\nNon vedrà più la chat. Per evitare che rientri con il vecchio ` +
+      'codice, dopo puoi cambiarlo (👥 Chi c\'è → Cambia il codice).',
+      [{ valore: 'si', testo: `Rimuovi ${chi.nome}`, pericolo: true }]);
+    if (!conferma) return;
+    try {
+      await Gruppi.rimuoviMembro(g.id, chi.user_id);
+      avviso(`${chi.nome} non fa più parte del gruppo.`);
+    } catch (err) {
+      avviso('⚠ ' + err.message);
+    }
+    return;
+  }
+
+  if (scelta === 'codice') {
+    const conferma = await chiediScelta(
+      'Cambiare il codice del gruppo?\n\nChi è già nel gruppo resta dentro; il vecchio codice non funzionerà più.',
+      [{ valore: 'si', testo: '🔑 Cambia il codice' }]);
+    if (!conferma) return;
+    try {
+      const aggiornato = await Gruppi.nuovoCodice(g.id);
+      gruppoCorrente = aggiornato;
+      $('chat-codice').textContent = aggiornato.codice;
+      avviso(`Nuovo codice: ${aggiornato.codice}`);
+    } catch (err) {
+      avviso('⚠ ' + err.message);
+    }
+    return;
+  }
+
   const conferma = await chiediScelta(`Uscire da «${g.nome}»?\n\nNon vedrai più la sua chat. I canti che hai già salvato restano tuoi.`,
     [{ valore: 'si', testo: 'Esci dal gruppo', pericolo: true }]);
   if (!conferma) return;
@@ -1593,9 +1734,25 @@ $('btn-senza-account').addEventListener('click', () => {
 if ('serviceWorker' in navigator) {
   const avevaGiaUnaVersione = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Offline non disponibile:', err));
-  // Quando arriva una versione nuova dell'app, lo diciamo (ma non la prima volta)
+  // Quando arriva una versione nuova dell'app la apro subito (ma non la prima volta),
+  // a meno che si stia scrivendo un canto o rispondendo a una domanda: in quel caso aspetto.
+  let ricaricando = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (avevaGiaUnaVersione) avviso('App aggiornata! Chiudila e riaprila per vedere le novità.');
+    if (!avevaGiaUnaVersione || ricaricando) return;
+    const staScrivendo = !schermate.modulo.hidden || document.querySelector('dialog[open]') ||
+      (!paginaIniziale.classList.contains('chiusa') && !$('blocco-accesso').hidden);
+    if (staScrivendo) {
+      avviso("È arrivata una versione nuova dell'app: la vedrai la prossima volta che la apri.");
+      return;
+    }
+    ricaricando = true;
+    location.reload();
+  });
+  // Quando si torna nell'app (es. era rimasta aperta in sottofondo), controllo se ci sono novità
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible') return;
+    const registrazione = await navigator.serviceWorker.getRegistration();
+    if (registrazione) registrazione.update().catch(() => {});
   });
 }
 

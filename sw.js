@@ -10,12 +10,14 @@
 // Se aggiungi un NUOVO file all'app (es. un altro .js), aggiungilo a FILE_APP
 // e cambia il numero di VERSIONE.
 
-const VERSIONE = 'canti-v3';
+const VERSIONE = 'canti-v5';
 
 const FILE_APP = [
   './',
   'index.html',
   'manifest.webmanifest',
+  'privacy.html',
+  'termini.html',
   'css/style.css',
   'js/config.js',
   'js/db.js',
@@ -36,7 +38,8 @@ const FILE_APP = [
 self.addEventListener('install', (evento) => {
   evento.waitUntil(
     caches.open(VERSIONE)
-      .then((cache) => cache.addAll(FILE_APP))
+      // "reload": prendo i file freschi da internet, non le copie vecchie del browser
+      .then((cache) => cache.addAll(FILE_APP.map((file) => new Request(file, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -62,7 +65,10 @@ self.addEventListener('fetch', (evento) => {
 async function primaLaRete(richiesta) {
   const cache = await caches.open(VERSIONE);
   try {
-    const risposta = await conLimiteDiTempo(fetch(richiesta), 3000);
+    // "no-cache": chiedo sempre al sito se il file è cambiato (se non è cambiato la risposta è
+    // velocissima). Senza, il browser userebbe per 10 minuti la sua copia e gli aggiornamenti tarderebbero.
+    const risposta = await conLimiteDiTempo(
+      fetch(richiesta.url, { cache: 'no-cache', credentials: 'same-origin' }), 3000);
     if (risposta.ok) cache.put(richiesta, risposta.clone());
     return risposta;
   } catch (e) {

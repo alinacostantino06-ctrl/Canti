@@ -77,6 +77,10 @@
           Ripeti la password
           <input name="ripeti" type="password" autocomplete="new-password" minlength="6" required>
         </label>
+        <p class="link-legali">
+          Creando l'account accetti i <a href="termini.html">Termini d'uso</a>
+          e l'<a href="privacy.html">Informativa privacy</a>.
+        </p>
         <button type="submit" class="btn-entra">Crea l'account</button>
         <button type="button" id="btn-torna-accesso" class="btn-installa">Hai già un account? Accedi</button>
       </form>
@@ -258,6 +262,9 @@
 
     <!-- Schermata 5: account (accesso per avere i canti su tutti i dispositivi) -->
     <section id="schermata-account" hidden>
+      <p class="link-account">
+        <a href="privacy.html">Informativa privacy</a> · <a href="termini.html">Termini d'uso</a>
+      </p>
       <!-- L'accesso online non è configurato (js/config.js vuoto) -->
       <div id="account-spento" hidden>
         <p class="nota-cestino">
@@ -286,6 +293,11 @@
         <p id="stato-sync" class="stato-sync"></p>
         <button id="btn-sincronizza" class="btn-grande">⟳ Sincronizza adesso</button>
         <button id="btn-esci" class="btn-tratteggiato">Esci dall'account</button>
+        <button id="btn-bloccati" class="btn-piccolo">🚫 Persone bloccate</button>
+
+        <div class="zona-pericolo">
+          <button id="btn-elimina-account" class="btn-piccolo">Elimina il mio account</button>
+        </div>
       </div>
     </section>
   </main>

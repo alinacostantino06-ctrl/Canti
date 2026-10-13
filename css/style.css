@@ -944,3 +944,38 @@ a.allegato-nome { color: var(--titoli); font-weight: 700; }
   gap: 0.8rem;
 }
 .accesso-iniziale input::placeholder { color: #9a8b78; font-size: 0.85rem; }
+
+/* ---------- Pagine "Informativa privacy" e "Termini d'uso" ---------- */
+.pagina-documento { padding-bottom: 2rem; }
+.documento {
+  max-width: 720px;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+.documento h2 {
+  margin: 1.6rem 0 0.4rem;
+  color: var(--titoli);
+  font-size: 1.15rem;
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
+}
+.documento a { color: var(--titoli); }
+.documento li { margin-bottom: 0.4rem; }
+.documento .dettaglio { color: var(--tenue); font-size: 0.85rem; }
+
+/* Link a privacy e termini nelle pagine di accesso e Account */
+.link-legali {
+  margin: 0.2rem 0 0;
+  color: #e9d9b4;
+  font-size: 0.75rem;
+  text-align: center;
+}
+.link-legali a { color: #f7f1e3; }
+.link-account { text-align: center; font-size: 0.85rem; }
+.link-account a { color: var(--titoli); }
+.zona-pericolo {
+  margin-top: 2.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--filetto);
+}
+.zona-pericolo .btn-piccolo { color: var(--pericolo); border-color: var(--pericolo); }

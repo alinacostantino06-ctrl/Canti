@@ -201,6 +201,62 @@ const Sync = {
     if (error) throw new Error(spiegaErrore(error));
   },
 
+  // Elimina per sempre l'account e tutti i suoi dati (canti, file, condivisioni, gruppi creati).
+  // Per sicurezza chiede di nuovo la password.
+  async eliminaAccount(password) {
+    if (!navigator.onLine) throw new Error('Per eliminare l’account serve internet.');
+    const { error: errPassword } = await this.client.auth.signInWithPassword({ email: this.utente.email, password });
+    if (errPassword) throw new Error(spiegaErrore(errPassword));
+    clearTimeout(this._timer);
+    const uid = this.utente.id;
+
+    // 1. i file dei miei canti
+    await this._svuotaCartella(BUCKET_FILE, uid);
+
+    // 2. i file che ho condiviso nei gruppi, e tutti quelli dei gruppi che ho creato
+    //    (i gruppi creati da me vengono eliminati insieme all'account)
+    const percorsi = [];
+    const { data: mie } = await this.client.from('condivisioni').select('allegati').eq('user_id', uid);
+    const { data: creati } = await this.client.from('gruppi').select('id').eq('creato_da', uid);
+    const idCreati = (creati || []).map((g) => g.id);
+    const { data: neiMieiGruppi } = idCreati.length
+      ? await this.client.from('condivisioni').select('allegati').in('gruppo_id', idCreati)
+      : { data: [] };
+    for (const c of [...(mie || []), ...(neiMieiGruppi || [])]) {
+      for (const f of c.allegati || []) percorsi.push(f.percorso);
+    }
+    for (let i = 0; i < percorsi.length; i += 100) {
+      await this.client.storage.from('condivisi').remove(percorsi.slice(i, i + 100));
+    }
+
+    // 3. l'account con tutti i dati online
+    const { error } = await this.client.rpc('elimina_il_mio_account');
+    if (error) {
+      throw new Error(/could not find the function|schema cache/i.test(error.message)
+        ? 'L’eliminazione dell’account non è ancora attiva: in Supabase va eseguito il file supabase/play-store.sql.'
+        : spiegaErrore(error));
+    }
+
+    // 4. questo dispositivo
+    await this.client.auth.signOut({ scope: 'local' });
+    await Db.svuotaTutto();
+    this.utente = null;
+    this.ultimaVolta = null;
+    this._imposta('fuori');
+    this._datiArrivati();
+  },
+
+  // Cancella tutti i file di una cartella dello spazio file (a gruppi di 100)
+  async _svuotaCartella(bucket, cartella) {
+    for (let giro = 0; giro < 100; giro++) {
+      const { data, error } = await this.client.storage.from(bucket).list(cartella, { limit: 100 });
+      if (error) throw error;
+      if (!data || !data.length) return;
+      const { error: errTogli } = await this.client.storage.from(bucket).remove(data.map((f) => `${cartella}/${f.name}`));
+      if (errTogli) throw errTogli;
+    }
+  },
+
   // Esce dall'account e toglie i canti da questo dispositivo (restano nell'account)
   async esci() {
     clearTimeout(this._timer);

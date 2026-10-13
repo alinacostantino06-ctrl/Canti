@@ -32,6 +32,7 @@ const schermate = {
   account: $('schermata-account'),
   gruppi: $('schermata-gruppi'),
   chat: $('schermata-chat'),
+  scaletta: $('schermata-scaletta'),
 };
 
 // Chiede al browser di non cancellare mai i dati salvati (utile per gli audio,
@@ -41,6 +42,7 @@ if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 // Mostra una sola schermata alla volta
 function mostra(nome, titoloBarra, conIndietro) {
   if (nome !== 'chat') lasciaChat();
+  if (nome !== 'canto' && nome !== 'scaletta') percorsoScaletta = null;
   for (const [chiave, el] of Object.entries(schermate)) el.hidden = chiave !== nome;
   titolo.textContent = titoloBarra;
   btnIndietro.hidden = !conIndietro;
@@ -141,8 +143,9 @@ async function mostraElenco() {
   if (cartellaCorrente !== null && !cartella) cartellaCorrente = null; // cartella eliminata
 
   mostra('elenco', cartella ? cartella.nome : NOMI_SEZIONI[sezioneCorrente], !!cartella);
-  comandiCartella.hidden = !cartella;
+  comandiCartella.hidden = !cartella || !!cartella.libretto;
   btnNuovaCartella.hidden = !!cartella;
+  await mostraInfoLibretto(cartella);
 
   // Le cartelle si vedono solo nella "radice" della sezione
   const cartelle = cartella ? [] : await Db.cartelle(sezioneCorrente);
@@ -341,13 +344,26 @@ window.addEventListener('resize', () => {
 });
 
 async function mostraCanto(id) {
-  cantoCorrente = id;
   const canto = await Db.canto(id);
+  if (!canto) {
+    avviso('Questo canto non è più disponibile su questo dispositivo.');
+    return mostraElenco();
+  }
+  cantoCorrente = id;
   const cartella = canto.cartella !== null ? await Db.cartella(canto.cartella) : null;
   mostra('canto', cartella ? cartella.nome : NOMI_SEZIONI[canto.sezione], true);
   titoloCanto.textContent = canto.titolo;
+
+  // I canti del libretto di un coro si leggono soltanto: li cura il direttore
+  const delLibretto = !!canto.libretto;
+  $('nota-libretto').hidden = !delLibretto;
+  if (delLibretto) $('nota-libretto').textContent = '📖 Dal libretto del coro «' + canto.libretto.nomeGruppo + '»: lo cura il direttore.';
+  for (const el of ['etichetta-audio-canto', 'etichetta-spartito-canto']) $(el).hidden = delLibretto;
+  document.querySelector('.comandi-fondo').hidden = delLibretto;
+
   disegnaTesto(canto.testo);
   mostraAllegati();
+  aggiornaNavScaletta(id);
 }
 
 // ---------- Sposta canto ----------
@@ -357,7 +373,7 @@ $('btn-sposta-canto').addEventListener('click', async () => {
   const opzioni = [];
   for (const sezione of Object.keys(NOMI_SEZIONI)) {
     opzioni.push({ valore: { sezione, cartella: null }, testo: `${NOMI_SEZIONI[sezione]} (fuori dalle cartelle)` });
-    for (const c of await Db.cartelle(sezione)) {
+    for (const c of (await Db.cartelle(sezione)).filter((x) => !x.libretto)) {
       opzioni.push({ valore: { sezione, cartella: c.id }, testo: `${NOMI_SEZIONI[sezione]} › 📁 ${c.nome}` });
     }
   }
@@ -391,7 +407,13 @@ async function mostraAllegati() {
   indirizziFile = [];
   allegatiCanto.innerHTML = '';
 
-  for (const a of await Db.allegati(cantoCorrente)) {
+  const canto = await Db.canto(cantoCorrente);
+  const delLibretto = !!(canto && canto.libretto);
+  const voce = await voceDaUsare(canto);
+  const laMiaVoce = (a) => !!voce && a.tipo === 'audio' && a.nome.toLowerCase().includes(voce);
+  const lista = (await Db.allegati(cantoCorrente)).sort((x, y) => laMiaVoce(y) - laMiaVoce(x));
+
+  for (const a of lista) {
     // Un file arrivato da un altro dispositivo può essere ancora in download
     const url = a.dati ? URL.createObjectURL(new Blob([a.dati], { type: a.mime })) : null;
     if (url) indirizziFile.push(url);
@@ -407,11 +429,11 @@ async function mostraAllegati() {
       link.target = '_blank';
       riga.append(link);
     } else {
-      riga.append(crea('span', 'allegato-nome', `${ICONA_FILE[a.tipo] || '🎵'} ${a.nome}`));
+      riga.append(crea('span', 'allegato-nome', `${ICONA_FILE[a.tipo] || '🎵'} ${a.nome}` + (laMiaVoce(a) ? ' · 🎤 la tua voce' : '')));
     }
 
     // Un PDF allegato si può trasformare in spartito (per i canti caricati come testo per sbaglio)
-    if (a.tipo === 'pdf' && url) {
+    if (a.tipo === 'pdf' && url && !delLibretto) {
       const comeSpartito = crea('button', 'btn-mini', '🎼');
       comeSpartito.title = 'Mostra come spartito';
       comeSpartito.addEventListener('click', () => trasformaInSpartito(a));
@@ -435,7 +457,7 @@ async function mostraAllegati() {
       avviso(`«${a.nome}» spostato nel cestino.`);
     });
 
-    riga.append(rinomina, elimina);
+    if (!delLibretto) riga.append(rinomina, elimina);
     li.append(riga);
 
     if (a.tipo === 'audio' && url) {
@@ -688,7 +710,7 @@ async function aggiornaTendinaCartelle(selezionata = null) {
   const tendina = modulo.cartella;
   tendina.innerHTML = '';
   tendina.append(new Option('— Nessuna cartella —', ''));
-  for (const c of await Db.cartelle(modulo.sezione.value)) {
+  for (const c of (await Db.cartelle(modulo.sezione.value)).filter((x) => !x.libretto)) {
     tendina.append(new Option(c.nome, c.id, false, c.id === selezionata));
   }
 }
@@ -875,7 +897,12 @@ btnAggiungi.addEventListener('click', () => mostraModulo());
 // "Indietro": dalla modifica si torna al canto; dal canto o dal modulo all'elenco;
 // da una cartella alla sezione
 btnIndietro.addEventListener('click', () => {
-  if (!schermate.chat.hidden) {
+  if (!schermate.canto.hidden && percorsoScaletta && scalettaAperta) {
+    percorsoScaletta = null;
+    disegnaScaletta();
+  } else if (!schermate.scaletta.hidden) {
+    tornaDallaScaletta();
+  } else if (!schermate.chat.hidden) {
     mostraGruppi();
   } else if (!schermate.modulo.hidden && idInModifica !== null) {
     mostraCanto(idInModifica);
@@ -1258,14 +1285,20 @@ $('btn-crea-gruppo').addEventListener('click', async () => {
   const mioNome = await chiediMioNome();
   if (!mioNome) return;
   try {
-    const g = await Gruppi.crea(nomeGruppo, mioNome);
-    await apriChat(g);
-    const scelta = await chiediScelta(
-      `Gruppo creato! Il codice per entrare è:\n\n${g.codice}\n\nMandalo a chi vuoi invitare.`,
-      [{ valore: 'invita', testo: '📨 Invita adesso' }], 'Più tardi');
-    if (scelta) invita(g);
+    await creaGruppo(nomeGruppo, mioNome);
   } catch (err) {
-    avviso('⚠ ' + err.message);
+    if (!/2 gruppi gratuiti/.test(err.message) || (await Gruppi.provaGiaUsata())) {
+      return chiediScelta(err.message, [], 'Ho capito');
+    }
+    const scelta = await chiediScelta(err.message +
+      '\n\nPuoi però creare «' + nomeGruppo + '» come gruppo Coro, con 7 giorni di prova gratuita.',
+      [{ valore: 'prova', testo: '⭐ Crealo come gruppo Coro (prova gratuita)' }]);
+    if (!scelta) return;
+    try {
+      await creaGruppo(nomeGruppo, mioNome, true);
+    } catch (err2) {
+      avviso('⚠ ' + err2.message);
+    }
   }
 });
 
@@ -1311,6 +1344,11 @@ async function apriChat(g) {
   $('chat-codice').textContent = g.codice;
   $('elenco-chat').innerHTML = '';
   $('chat-vuota').hidden = true;
+  $('elenco-avvisi').hidden = true;
+  $('coro-stato').hidden = true;
+  $('schede-coro').hidden = true;
+  scegliScheda('chat');
+  await preparaCoro(g);
   await caricaChat(true);
   // messaggi nuovi "in diretta"; e comunque ricontrollo ogni 20 secondi
   try { smettiDiAscoltare = Gruppi.ascolta(g.id, () => caricaChat()); } catch (e) { /* va bene lo stesso */ }
@@ -1471,7 +1509,7 @@ async function chiediDestinazione(c) {
   const opzioni = [];
   for (const sezione of sezioni) {
     opzioni.push({ valore: { sezione, cartella: null }, testo: `${NOMI_SEZIONI[sezione]} (fuori dalle cartelle)` });
-    for (const cart of await Db.cartelle(sezione)) {
+    for (const cart of (await Db.cartelle(sezione)).filter((x) => !x.libretto)) {
       opzioni.push({ valore: { sezione, cartella: cart.id, nomeCartella: cart.nome },
         testo: `${NOMI_SEZIONI[sezione]} › 📁 ${cart.nome}` });
     }
@@ -1601,9 +1639,15 @@ $('btn-membri').addEventListener('click', async () => {
   } catch (err) {
     return avviso('⚠ ' + err.message);
   }
-  const elencoNomi = membri.map((m) => '• ' + m.nome + (m.user_id === Sync.utente.id ? ' (tu)' : '')).join('\n');
+  const coro = Gruppi.coroAttivo(g);
+  const elencoNomi = membri.map((m) => '• ' + m.nome +
+    (coro && (m.ruolo === 'direttore' || m.user_id === g.creato_da) ? ' ⭐ direttore' : '') +
+    (coro && m.voce ? ' · ' + (VOCI[m.voce] || m.voce) : '') +
+    (m.user_id === Sync.utente.id ? ' (tu)' : '')).join('\n');
   const moderatore = Gruppi.sonoCreatore(g);
   const opzioni = [];
+  if (coro) opzioni.push({ valore: 'voce', testo: '🎤 La mia voce' });
+  if (coro && moderatore) opzioni.push({ valore: 'direttori', testo: '⭐ Scegli i direttori' });
   if (moderatore) {
     opzioni.push({ valore: 'rimuovi', testo: '👤 Rimuovi una persona dal gruppo' });
     opzioni.push({ valore: 'codice', testo: '🔑 Cambia il codice del gruppo' });
@@ -1614,6 +1658,40 @@ $('btn-membri').addEventListener('click', async () => {
     (moderatore ? '\n\nHai creato tu questo gruppo: ne sei il moderatore.' : ''),
     opzioni, 'Chiudi');
   if (!scelta) return;
+
+  if (scelta === 'voce') {
+    const voce = await chiediScelta('Che voce canti? Negli audio dei canti vedrai per primi quelli della tua voce.',
+      [...Object.entries(VOCI).map(([valore, testo]) => ({ valore, testo: '🎤 ' + testo })), { valore: 'nessuna', testo: 'Nessuna in particolare' }]);
+    if (!voce) return;
+    const nuova = voce === 'nessuna' ? '' : voce;
+    try {
+      await Gruppi.impostaVoce(g.id, nuova);
+      await Db.salvaImpostazione('miaVoce', nuova);
+      const info = (await Db.impostazione('coro:' + g.id)) || {};
+      await Db.salvaImpostazione('coro:' + g.id, { ...info, voce: nuova });
+      g.miaVoce = nuova;
+      avviso(nuova ? 'La tua voce: ' + VOCI[nuova] + '.' : 'Voce tolta.');
+    } catch (err) {
+      avviso('⚠ ' + err.message);
+    }
+    return;
+  }
+
+  if (scelta === 'direttori') {
+    const altri = membri.filter((m) => m.user_id !== Sync.utente.id);
+    if (!altri.length) return avviso('Nel gruppo per ora ci sei solo tu.');
+    const chi = await chiediScelta('I direttori possono curare libretto e scalette e scrivere avvisi. Tocca una persona per nominarla o toglierla.',
+      altri.map((m) => ({ valore: m, testo: m.ruolo === 'direttore' ? '⭐ ' + m.nome + ' (togli da direttore)' : '👤 ' + m.nome + ' (nomina direttore)' })));
+    if (!chi) return;
+    const nuovo = chi.ruolo === 'direttore' ? 'corista' : 'direttore';
+    try {
+      await Gruppi.impostaRuolo(g.id, chi.user_id, nuovo);
+      avviso(nuovo === 'direttore' ? chi.nome + ' ora è direttore.' : chi.nome + ' non è più direttore.');
+    } catch (err) {
+      avviso('⚠ ' + err.message);
+    }
+    return;
+  }
 
   if (scelta === 'rimuovi') {
     const altri = membri.filter((m) => m.user_id !== Sync.utente.id);
@@ -1683,6 +1761,478 @@ Sync.quandoCambiaStato((stato) => {
   if (stato === 'ok') aggiornaNovita();
   if (!Sync.utente) $('pallino-gruppi').hidden = true;
 });
+
+// ---------- Versione Coro: libretto, scalette, ruoli, voci, avvisi ----------
+
+const MOMENTI_MESSA = ['Ingresso', 'Kyrie', 'Gloria', 'Salmo', 'Alleluia', 'Offertorio', 'Santo',
+  'Mistero della fede', 'Padre nostro', 'Agnello di Dio', 'Comunione', 'Ringraziamento', 'Finale'];
+const VOCI = { soprano: 'Soprano', contralto: 'Contralto', tenore: 'Tenore', basso: 'Basso' };
+
+const dataLunga = (data) =>
+  new Date(data).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' });
+
+// La voce da mettere in evidenza negli audio: quella scelta nel coro del libretto, o l'ultima scelta
+async function voceDaUsare(canto) {
+  if (canto && canto.libretto) {
+    const info = await Db.impostazione('coro:' + canto.libretto.gruppo);
+    if (info && info.voce) return info.voce;
+  }
+  return (await Db.impostazione('miaVoce')) || '';
+}
+
+// Nella cartella 📖 del libretto: una nota e le scalette (funzionano anche senza internet)
+async function mostraInfoLibretto(cartella) {
+  const nota = $('nota-cartella-libretto');
+  const lista = $('scalette-cartella');
+  nota.hidden = true;
+  lista.hidden = true;
+  lista.innerHTML = '';
+  if (!cartella || !cartella.libretto) return;
+
+  const gid = cartella.libretto.gruppo;
+  const info = (await Db.impostazione('coro:' + gid)) || {};
+  nota.textContent = info.attivo === false
+    ? '📖 Libretto del coro. La versione Coro del gruppo non è più attiva: questi canti restano, ma non si aggiornano più.'
+    : '📖 Libretto del coro: questi canti li cura il direttore e si aggiornano da soli.';
+  nota.hidden = false;
+
+  const scalette = (await Db.impostazione('scalette:' + gid)) || [];
+  for (const sc of scalette) {
+    const btn = crea('button', '', '📅 ' + sc.titolo);
+    btn.addEventListener('click', () => apriScaletta(sc, { gruppoId: gid, modificabile: false, daGruppo: false }));
+    const li = crea('li');
+    li.append(btn);
+    lista.append(li);
+  }
+  lista.hidden = !scalette.length;
+}
+
+// Prepara la parte Coro della pagina del gruppo
+async function preparaCoro(g) {
+  const coro = Gruppi.coroAttivo(g);
+  const posto = await Gruppi.mioPosto(g.id).catch(() => ({ ruolo: 'corista', voce: '' }));
+  g.mioRuolo = posto.ruolo;
+  g.miaVoce = posto.voce;
+  const direttore = Gruppi.sonoDirettore(g);
+
+  $('schede-coro').hidden = !coro;
+  $('btn-nuovo-avviso').hidden = !(coro && direttore);
+  if (!coro) scegliScheda('chat');
+
+  const stato = $('coro-stato');
+  stato.innerHTML = '';
+  stato.hidden = true;
+  if (coro && direttore) {
+    stato.append(crea('span', '', '⭐ Versione Coro attiva fino al ' + dataLunga(g.coro_fino_al) +
+      (g.creato_da === Sync.utente.id ? '' : ' · sei direttore')));
+    stato.hidden = false;
+  } else if (!coro && g.creato_da === Sync.utente.id) {
+    stato.append(crea('p', '', '⭐ Versione Coro: libretto condiviso, scalette delle messe, ruoli, voci e avvisi per tutto il coro.'));
+    if (!(await Gruppi.provaGiaUsata())) {
+      const prova = crea('button', 'btn-grande', 'Provala gratis per 7 giorni');
+      prova.addEventListener('click', async () => {
+        try {
+          Object.assign(g, await Gruppi.iniziaProva(g.id));
+          avviso('Versione Coro attiva per 7 giorni: buona prova!');
+          await preparaCoro(g);
+          aggiornaLibrettiOra();
+        } catch (err) {
+          avviso('⚠ ' + err.message);
+        }
+      });
+      stato.append(prova);
+    } else {
+      stato.append(crea('p', 'dettaglio', 'La versione Coro non è attiva in questo gruppo.'));
+    }
+    stato.hidden = false;
+  }
+  await mostraAvvisi(g);
+}
+
+// ---- Avvisi ----
+async function mostraAvvisi(g) {
+  const ul = $('elenco-avvisi');
+  ul.innerHTML = '';
+  const lista = Gruppi.coroAttivo(g) ? await Gruppi.avvisi(g.id) : [];
+  const direttore = Gruppi.sonoDirettore(g);
+  for (const a of lista.slice(0, 3)) {
+    const li = crea('li', 'avviso-coro');
+    const testa = crea('div', 'autore', '📣 ' + a.autore + ' · ' +
+      new Date(a.creato).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }));
+    if (direttore) {
+      const togli = crea('button', 'btn-mini', '🗑');
+      togli.title = 'Togli avviso';
+      togli.addEventListener('click', async () => {
+        try {
+          await Gruppi.eliminaAvviso(a.id);
+          mostraAvvisi(g);
+        } catch (err) {
+          avviso('⚠ ' + err.message);
+        }
+      });
+      testa.append(togli);
+    }
+    li.append(testa, crea('p', '', a.testo));
+    ul.append(li);
+  }
+  ul.hidden = !lista.length;
+}
+
+$('btn-nuovo-avviso').addEventListener('click', async () => {
+  const g = gruppoCorrente;
+  const testo = await chiediNome('Avviso per tutto il coro (es. «Prove spostate a giovedì alle 21»)');
+  if (!testo) return;
+  try {
+    await Gruppi.pubblicaAvviso(g.id, testo);
+    avviso('Avviso pubblicato.');
+    mostraAvvisi(g);
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+});
+
+// ---- Schede del gruppo Coro ----
+function scegliScheda(nome) {
+  document.querySelectorAll('#schede-coro button').forEach((b) => b.classList.toggle('attiva', b.dataset.scheda === nome));
+  $('pannello-chat').hidden = nome !== 'chat';
+  $('pannello-libretto').hidden = nome !== 'libretto';
+  $('pannello-scalette').hidden = nome !== 'scalette';
+  if (nome === 'libretto') mostraLibretto();
+  if (nome === 'scalette') mostraScalette();
+}
+document.querySelectorAll('#schede-coro button').forEach((b) =>
+  b.addEventListener('click', () => scegliScheda(b.dataset.scheda)));
+
+// ---- Libretto ----
+async function mostraLibretto() {
+  const g = gruppoCorrente;
+  const ul = $('elenco-libretto');
+  const direttore = Gruppi.sonoDirettore(g);
+  $('btn-aggiungi-libretto').hidden = !direttore;
+  ul.innerHTML = '';
+  let voci;
+  try {
+    voci = await Gruppi.libretto(g.id);
+  } catch (err) {
+    ul.append(crea('li', 'dettaglio', '⚠ ' + err.message));
+    return;
+  }
+  if (gruppoCorrente !== g) return;
+  for (const v of voci) {
+    const li = crea('li', 'allegato');
+    const riga = crea('div', 'allegato-riga');
+    const files = v.allegati || [];
+    const dettagli = [NOMI_SEZIONI[v.sezione] || ''];
+    if (files.some((f) => f.tipo === 'audio')) dettagli.push('🎵');
+    if (files.some((f) => f.tipo === 'spartito')) dettagli.push('🎼');
+    const nome = crea('button', 'allegato-nome nome-libretto', '♪ ' + v.titolo);
+    nome.append(crea('span', 'dettaglio', ' ' + dettagli.join(' ')));
+    nome.addEventListener('click', () => apriDalLibretto(v.id));
+    riga.append(nome);
+    if (direttore) {
+      if (v.canto_origine) {
+        const aggiorna = crea('button', 'btn-mini', '↻');
+        aggiorna.title = 'Aggiorna con la versione attuale del tuo canto';
+        aggiorna.addEventListener('click', async () => {
+          try {
+            await Gruppi.aggiornaNelLibretto(v, (t) => avviso(t));
+            avviso('«' + v.titolo + '» aggiornato per tutto il coro.');
+            mostraLibretto();
+            aggiornaLibrettiOra();
+          } catch (err) {
+            avviso('⚠ ' + err.message);
+          }
+        });
+        riga.append(aggiorna);
+      }
+      const togli = crea('button', 'btn-mini', '🗑');
+      togli.title = 'Togli dal libretto';
+      togli.addEventListener('click', async () => {
+        const scelta = await chiediScelta('Togliere «' + v.titolo + '» dal libretto del coro?\n\nSparirà dal libretto di tutti. Il tuo canto resta tra i tuoi canti.',
+          [{ valore: 'si', testo: 'Togli dal libretto', pericolo: true }]);
+        if (!scelta) return;
+        try {
+          await Gruppi.rimuoviDalLibretto(v);
+          mostraLibretto();
+          aggiornaLibrettiOra();
+        } catch (err) {
+          avviso('⚠ ' + err.message);
+        }
+      });
+      riga.append(togli);
+    }
+    li.append(riga);
+    ul.append(li);
+  }
+  $('libretto-vuoto').hidden = voci.length > 0;
+}
+
+$('btn-aggiungi-libretto').addEventListener('click', async () => {
+  const g = gruppoCorrente;
+  const id = await scegliCanto();
+  if (!id) return;
+  try {
+    await Gruppi.aggiungiAlLibretto(g.id, id, (t) => avviso(t));
+    avviso('Canto aggiunto al libretto: arriverà a tutto il coro.');
+    mostraLibretto();
+    aggiornaLibrettiOra();
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+});
+
+// Apre un canto del libretto (dalla copia sul dispositivo; se non c'è ancora, la scarica)
+async function apriDalLibretto(id) {
+  if (!(await Db.canto(id))) {
+    avviso('Scarico il libretto…');
+    await aggiornaLibrettiOra();
+  }
+  if (!(await Db.canto(id))) return avviso('Questo canto non è ancora disponibile su questo dispositivo: serve internet.');
+  mostraCanto(id);
+}
+
+// ---- Copia dei libretti sul dispositivo ----
+let librettiInCorso = null;
+let ultimoAggiornamentoLibretti = 0;
+function aggiornaLibrettiOra() {
+  if (librettiInCorso) return librettiInCorso;
+  librettiInCorso = (async () => {
+    try {
+      const cambiato = await Gruppi.aggiornaLibretti();
+      ultimoAggiornamentoLibretti = Date.now();
+      if (cambiato && !schermate.elenco.hidden) {
+        const y = window.scrollY;
+        await mostraElenco();
+        window.scrollTo(0, y);
+      }
+    } catch (err) {
+      console.warn('Libretti non aggiornati:', err);
+    } finally {
+      librettiInCorso = null;
+    }
+  })();
+  return librettiInCorso;
+}
+Sync.quandoCambiaStato((stato) => {
+  // dopo ogni sincronizzazione riuscita, al massimo ogni 3 minuti
+  if (stato === 'ok' && Date.now() - ultimoAggiornamentoLibretti > 3 * 60 * 1000) aggiornaLibrettiOra();
+});
+
+// ---- Scalette ----
+async function mostraScalette() {
+  const g = gruppoCorrente;
+  const direttore = Gruppi.sonoDirettore(g);
+  $('btn-nuova-scaletta').hidden = !direttore;
+  const lista = await Gruppi.scalette(g.id);
+  if (gruppoCorrente !== g) return;
+  const ul = $('elenco-scalette');
+  ul.innerHTML = '';
+  for (const sc of lista) {
+    const btn = crea('button', 'voce-scaletta', '📅 ' + sc.titolo);
+    btn.append(crea('span', 'dettaglio', (sc.voci || []).length + ' canti'));
+    btn.addEventListener('click', () => apriScaletta(sc, { gruppoId: g.id, modificabile: direttore, daGruppo: true }));
+    const li = crea('li');
+    li.append(btn);
+    ul.append(li);
+  }
+  $('scalette-vuote').hidden = lista.length > 0;
+}
+
+function prossimaDomenica() {
+  const d = new Date();
+  d.setDate(d.getDate() + ((7 - d.getDay()) % 7));
+  return d;
+}
+const dataIso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+
+$('btn-nuova-scaletta').addEventListener('click', async () => {
+  const domenica = prossimaDomenica();
+  const titoloScaletta = await chiediNome('Titolo della scaletta',
+    'Messa di domenica ' + domenica.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }));
+  if (!titoloScaletta) return;
+  apriScaletta({ titolo: titoloScaletta, data: dataIso(domenica), voci: [] },
+    { gruppoId: gruppoCorrente.id, modificabile: true, daGruppo: true, nuova: true });
+});
+
+// La scaletta aperta e, se si sta scorrendo, il canto a cui si è arrivati
+let scalettaAperta = null;   // { scaletta, gruppoId, modificabile, daGruppo, modificata }
+let percorsoScaletta = null; // { indice }
+
+function apriScaletta(sc, opzioni) {
+  scalettaAperta = { scaletta: JSON.parse(JSON.stringify(sc)), ...opzioni, modificata: !!opzioni.nuova };
+  percorsoScaletta = null;
+  disegnaScaletta();
+}
+
+function disegnaScaletta() {
+  const { scaletta, modificabile } = scalettaAperta;
+  if (schermate.scaletta.hidden) mostra('scaletta', scaletta.titolo, true);
+  else titolo.textContent = scaletta.titolo;
+  const voci = scaletta.voci || [];
+  $('scaletta-sottotitolo').textContent = (scaletta.data ? dataLunga(scaletta.data) + ' · ' : '') +
+    (voci.length === 1 ? '1 canto' : voci.length + ' canti') + ' · tocca un canto per aprirlo';
+
+  const ol = $('voci-scaletta');
+  ol.innerHTML = '';
+  voci.forEach((v, i) => {
+    const li = crea('li', 'voce-scaletta-riga');
+    li.append(crea('span', 'momento', v.momento));
+    const apri = crea('button', 'titolo-voce', '♪ ' + v.titolo);
+    apri.addEventListener('click', () => {
+      percorsoScaletta = { indice: i };
+      apriDalLibretto(v.libretto_id);
+    });
+    li.append(apri);
+    if (modificabile) {
+      const sposta = (passo) => {
+        const j = i + passo;
+        if (j < 0 || j >= voci.length) return;
+        [voci[i], voci[j]] = [voci[j], voci[i]];
+        scalettaAperta.modificata = true;
+        disegnaScaletta();
+      };
+      const su = crea('button', 'btn-mini', '↑');
+      su.title = 'Sposta su';
+      su.addEventListener('click', () => sposta(-1));
+      const giu = crea('button', 'btn-mini', '↓');
+      giu.title = 'Sposta giù';
+      giu.addEventListener('click', () => sposta(1));
+      const togli = crea('button', 'btn-mini', '✕');
+      togli.title = 'Togli dalla scaletta';
+      togli.addEventListener('click', () => {
+        voci.splice(i, 1);
+        scalettaAperta.modificata = true;
+        disegnaScaletta();
+      });
+      li.append(su, giu, togli);
+    }
+    ol.append(li);
+  });
+  $('scaletta-vuota').hidden = voci.length > 0;
+  $('comandi-scaletta').hidden = !modificabile;
+  $('btn-elimina-scaletta').hidden = !scaletta.id;
+  $('btn-salva-scaletta').hidden = !(modificabile && scalettaAperta.modificata);
+}
+
+$('btn-aggiungi-voce').addEventListener('click', async () => {
+  let momento = await chiediScelta('Per quale momento della messa?',
+    [...MOMENTI_MESSA.map((m) => ({ valore: m, testo: m })), { valore: '__altro', testo: 'Altro…' }]);
+  if (!momento) return;
+  if (momento === '__altro') momento = await chiediNome('Scrivi il momento (es. «Canto a Maria»)');
+  if (!momento) return;
+  let voci;
+  try {
+    voci = await Gruppi.libretto(scalettaAperta.gruppoId);
+  } catch (err) {
+    return avviso('⚠ ' + err.message);
+  }
+  if (!voci.length) return avviso('Prima aggiungi dei canti al libretto del coro.');
+  const scelto = await chiediScelta('Quale canto per «' + momento + '»?', voci.map((v) => ({ valore: v, testo: '♪ ' + v.titolo })));
+  if (!scelto) return;
+  scalettaAperta.scaletta.voci.push({ momento, libretto_id: scelto.id, titolo: scelto.titolo });
+  scalettaAperta.modificata = true;
+  disegnaScaletta();
+});
+
+$('btn-rinomina-scaletta').addEventListener('click', async () => {
+  const sc = scalettaAperta.scaletta;
+  const nuovo = await chiediNome('Titolo della scaletta', sc.titolo);
+  if (!nuovo) return;
+  const attuale = sc.data ? new Date(sc.data).toLocaleDateString('it-IT') : '';
+  const data = await chiediNome('Data (giorno/mese/anno, es. 20/10/2026). Lascia vuoto se non serve.', attuale, { facoltativo: true });
+  if (data === null) return;
+  if (data) {
+    const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(data.trim());
+    if (!m) return avviso('Data non valida: scrivila come 20/10/2026.');
+    sc.data = m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+  } else {
+    sc.data = null;
+  }
+  sc.titolo = nuovo;
+  scalettaAperta.modificata = true;
+  disegnaScaletta();
+});
+
+$('btn-salva-scaletta').addEventListener('click', async () => {
+  try {
+    await Gruppi.salvaScaletta(scalettaAperta.gruppoId, scalettaAperta.scaletta);
+    scalettaAperta.modificata = false;
+    avviso('Scaletta salvata: la vede tutto il coro.');
+    aggiornaLibrettiOra();
+    tornaDallaScaletta();
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+});
+
+$('btn-elimina-scaletta').addEventListener('click', async () => {
+  const sc = scalettaAperta.scaletta;
+  const scelta = await chiediScelta('Eliminare la scaletta «' + sc.titolo + '»? Sparirà per tutto il coro.',
+    [{ valore: 'si', testo: 'Elimina la scaletta', pericolo: true }]);
+  if (!scelta) return;
+  try {
+    await Gruppi.eliminaScaletta(sc.id);
+    scalettaAperta.modificata = false;
+    aggiornaLibrettiOra();
+    tornaDallaScaletta();
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+});
+
+// Dalla scaletta si torna al gruppo (scheda Scalette) o alla cartella del libretto
+async function tornaDallaScaletta() {
+  if (scalettaAperta && scalettaAperta.modificata) {
+    const scelta = await chiediScelta('Uscire senza salvare la scaletta?', [{ valore: 'esci', testo: 'Esci senza salvare', pericolo: true }]);
+    if (!scelta) return;
+  }
+  const daGruppo = scalettaAperta && scalettaAperta.daGruppo;
+  scalettaAperta = null;
+  percorsoScaletta = null;
+  if (daGruppo && gruppoCorrente) {
+    await apriChat(gruppoCorrente);
+    scegliScheda('scalette');
+  } else {
+    mostraElenco();
+  }
+}
+
+// Nella pagina del canto aperto da una scaletta: ‹ canto precedente · canto successivo ›
+function aggiornaNavScaletta(id) {
+  const nav = $('nav-scaletta');
+  const voci = scalettaAperta && scalettaAperta.scaletta.voci;
+  if (!percorsoScaletta || !voci || !voci[percorsoScaletta.indice] || voci[percorsoScaletta.indice].libretto_id !== id) {
+    nav.hidden = true;
+    return;
+  }
+  const i = percorsoScaletta.indice;
+  const prima = $('btn-scaletta-prima');
+  const dopo = $('btn-scaletta-dopo');
+  prima.hidden = i === 0;
+  dopo.hidden = i === voci.length - 1;
+  if (i > 0) prima.textContent = '‹ ' + voci[i - 1].momento;
+  if (i < voci.length - 1) dopo.textContent = voci[i + 1].momento + ' ›';
+  nav.hidden = false;
+}
+$('btn-scaletta-prima').addEventListener('click', () => {
+  percorsoScaletta.indice--;
+  apriDalLibretto(scalettaAperta.scaletta.voci[percorsoScaletta.indice].libretto_id);
+});
+$('btn-scaletta-dopo').addEventListener('click', () => {
+  percorsoScaletta.indice++;
+  apriDalLibretto(scalettaAperta.scaletta.voci[percorsoScaletta.indice].libretto_id);
+});
+
+// ---- Creare un gruppo (con il limite dei 2 gruppi gratuiti) ----
+async function creaGruppo(nomeGruppo, mioNome, conProva = false) {
+  const g = await Gruppi.crea(nomeGruppo, mioNome, conProva);
+  await apriChat(g);
+  const scelta = await chiediScelta(
+    (conProva ? 'Gruppo Coro creato, con 7 giorni di prova gratuita!' : 'Gruppo creato!') +
+    ' Il codice per entrare è:\n\n' + g.codice + '\n\nMandalo a chi vuoi invitare.',
+    [{ valore: 'invita', testo: '📨 Invita adesso' }], 'Più tardi');
+  if (scelta) invita(g);
+}
 
 // ---------- Pagina iniziale ----------
 // Prima si vedono solo la croce e "Canta con noi". Toccandolo:

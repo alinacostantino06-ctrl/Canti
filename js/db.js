@@ -223,10 +223,11 @@ const Db = {
 
   canto: (id) => operazione('canti', 'readonly', (tx) => tx.objectStore('canti').get(id)),
 
-  // Tutti i canti (di tutte le sezioni e cartelle), in ordine alfabetico
+  // Tutti i miei canti (di tutte le sezioni e cartelle), in ordine alfabetico.
+  // Le copie dei libretti dei cori non sono "mie": le escludo.
   async tuttiICanti() {
     const tutti = await operazione('canti', 'readonly', (tx) => tx.objectStore('canti').getAll());
-    return attivi(tutti).sort(perNome('titolo'));
+    return attivi(tutti).filter((c) => !c.libretto).sort(perNome('titolo'));
   },
 
   // Salva un nuovo canto e restituisce il suo id
@@ -495,6 +496,58 @@ const Db = {
       totale += await operazione(nome, 'readonly', (tx) => tx.objectStore(nome).index('daInviare').count());
     }
     return totale;
+  },
+
+  // ---------- Libretti dei cori (copie solo su questo dispositivo) ----------
+  // I canti del libretto di un coro vengono copiati qui per usarli offline, in una cartella
+  // "📖 Nome del coro" per ogni sezione. Hanno il campo "libretto" e NON vengono inviati
+  // all'account (non hanno "daInviare"): li aggiorna solo il direttore del coro.
+
+  async librettoInCache(gruppoId) {
+    const tutti = await operazione('canti', 'readonly', (tx) => tx.objectStore('canti').getAll());
+    return tutti.filter((c) => c.libretto && c.libretto.gruppo === gruppoId);
+  },
+
+  async gruppiConLibretto() {
+    const cartelle = await operazione('cartelle', 'readonly', (tx) => tx.objectStore('cartelle').getAll());
+    return [...new Set(cartelle.filter((c) => c.libretto).map((c) => c.libretto.gruppo))];
+  },
+
+  // gruppo: { id, nome }; voce: riga del libretto; files: [{ id, nome, tipo, mime, dati }]
+  salvaCantoLibretto: (gruppo, voce, files) =>
+    operazione(['canti', 'cartelle', 'allegati'], 'readwrite', (tx) => {
+      const idCartella = 'libretto:' + gruppo.id + ':' + voce.sezione;
+      tx.objectStore('cartelle').put({ id: idCartella, nome: '📖 ' + gruppo.nome, sezione: voce.sezione,
+        libretto: { gruppo: gruppo.id }, modificato: Date.now() });
+      tx.objectStore('canti').put({
+        id: voce.id, titolo: voce.titolo, sezione: voce.sezione, cartella: idCartella, testo: voce.testo,
+        creato: Date.parse(voce.aggiornato) || Date.now(), modificato: Date.now(),
+        libretto: { gruppo: gruppo.id, nomeGruppo: gruppo.nome, aggiornato: voce.aggiornato },
+      });
+      const allegati = tx.objectStore('allegati');
+      allegati.index('cantoId').getAllKeys(voce.id).onsuccess = (e) => {
+        e.target.result.forEach((k) => allegati.delete(k));
+        for (const f of files) {
+          allegati.put({ id: f.id, cantoId: voce.id, nome: f.nome, tipo: f.tipo, mime: f.mime,
+            dati: f.dati, fileInviato: true, modificato: Date.now(), libretto: true });
+        }
+      };
+    }),
+
+  togliCantoLibretto: (id) =>
+    operazione(['canti', 'allegati'], 'readwrite', (tx) => {
+      tx.objectStore('canti').delete(id);
+      const allegati = tx.objectStore('allegati');
+      allegati.index('cantoId').getAllKeys(id).onsuccess = (e) => e.target.result.forEach((k) => allegati.delete(k));
+    }),
+
+  async togliLibretto(gruppoId) {
+    for (const c of await Db.librettoInCache(gruppoId)) await Db.togliCantoLibretto(c.id);
+    await operazione('cartelle', 'readwrite', (tx) => {
+      const s = tx.objectStore('cartelle');
+      s.getAll().onsuccess = (e) => e.target.result
+        .filter((c) => c.libretto && c.libretto.gruppo === gruppoId).forEach((c) => s.delete(c.id));
+    });
   },
 
   // Toglie tutti i canti da questo dispositivo (quando si esce dall'account)

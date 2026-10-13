@@ -112,6 +112,10 @@
         <button id="btn-elimina-cartella" class="btn-piccolo">🗑 Elimina cartella</button>
       </div>
 
+      <!-- Solo nella cartella 📖 del libretto di un coro -->
+      <p id="nota-cartella-libretto" class="nota-cestino" hidden></p>
+      <ul id="scalette-cartella" class="scalette-veloci" hidden></ul>
+
       <ul id="elenco-cartelle" class="elenco"></ul>
       <ul id="elenco" class="elenco"></ul>
       <p id="elenco-vuoto" class="vuoto" hidden>
@@ -182,15 +186,16 @@
     <!-- Schermata 3: visualizzazione di un canto -->
     <section id="schermata-canto" hidden>
       <h2 id="titolo-canto" class="titolo-canto"></h2>
+      <p id="nota-libretto" class="nota-libretto" hidden></p>
       <div class="fregio" aria-hidden="true">❦</div>
 
       <ul id="allegati-canto" class="allegati"></ul>
       <div class="comandi">
-        <label class="btn-piccolo">
+        <label id="etichetta-audio-canto" class="btn-piccolo">
           🎵 Aggiungi audio
           <input id="file-audio-canto" type="file" accept="audio/*" multiple hidden>
         </label>
-        <label class="btn-piccolo">
+        <label id="etichetta-spartito-canto" class="btn-piccolo">
           🎼 Aggiungi spartito
           <input id="file-spartito-canto" type="file" accept="application/pdf,.pdf,image/*" hidden>
         </label>
@@ -206,6 +211,12 @@
       <div id="spartiti-canto" class="spartiti"></div>
 
       <div id="testo-canto" class="testo-canto"></div>
+
+      <!-- Se il canto è aperto da una scaletta: canto precedente / successivo -->
+      <div id="nav-scaletta" class="nav-scaletta" hidden>
+        <button id="btn-scaletta-prima" class="btn-piccolo"></button>
+        <button id="btn-scaletta-dopo" class="btn-piccolo"></button>
+      </div>
 
       <!-- In fondo, così aprendo il canto si vede subito il testo -->
       <div class="comandi comandi-fondo">
@@ -253,11 +264,57 @@
         <button id="btn-membri" class="btn-piccolo">👥 Chi c'è</button>
       </div>
       <p id="chat-avviso" class="stato-sync errore" hidden></p>
-      <ul id="elenco-chat" class="chat"></ul>
-      <p id="chat-vuota" class="vuoto" hidden>Nessun canto condiviso ancora.<br>Inizia tu!</p>
-      <div class="barra-chat">
-        <button id="btn-condividi-qui" class="btn-grande">♪ Condividi un canto</button>
+
+      <!-- Versione Coro: stato (per il direttore) e prova gratuita -->
+      <div id="coro-stato" class="coro-stato" hidden></div>
+
+      <!-- Avvisi del direttore, in evidenza -->
+      <ul id="elenco-avvisi" class="avvisi" hidden></ul>
+      <button id="btn-nuovo-avviso" class="btn-piccolo" hidden>📣 Scrivi un avviso al coro</button>
+
+      <!-- Schede (solo nei gruppi Coro) -->
+      <div id="schede-coro" class="schede" role="tablist" hidden>
+        <button data-scheda="chat" class="attiva">💬 Chat</button>
+        <button data-scheda="libretto">📖 Libretto</button>
+        <button data-scheda="scalette">📅 Scalette</button>
       </div>
+
+      <div id="pannello-chat">
+        <ul id="elenco-chat" class="chat"></ul>
+        <p id="chat-vuota" class="vuoto" hidden>Nessun canto condiviso ancora.<br>Inizia tu!</p>
+        <div class="barra-chat">
+          <button id="btn-condividi-qui" class="btn-grande">♪ Condividi un canto</button>
+        </div>
+      </div>
+
+      <div id="pannello-libretto" hidden>
+        <p class="nota-cestino">
+          Il libretto del coro arriva da solo a tutti, nella cartella <strong>📖</strong> con il nome
+          del gruppo, e si può usare anche <strong>senza internet</strong>.
+        </p>
+        <ul id="elenco-libretto" class="allegati"></ul>
+        <p id="libretto-vuoto" class="vuoto" hidden>Il libretto è ancora vuoto.</p>
+        <button id="btn-aggiungi-libretto" class="btn-grande" hidden>＋ Aggiungi canti al libretto</button>
+      </div>
+
+      <div id="pannello-scalette" hidden>
+        <ul id="elenco-scalette" class="elenco"></ul>
+        <p id="scalette-vuote" class="vuoto" hidden>Nessuna scaletta.</p>
+        <button id="btn-nuova-scaletta" class="btn-grande" hidden>＋ Nuova scaletta</button>
+      </div>
+    </section>
+
+    <!-- Schermata 8: una scaletta (es. la messa di domenica) -->
+    <section id="schermata-scaletta" hidden>
+      <p id="scaletta-sottotitolo" class="nota-cestino"></p>
+      <ol id="voci-scaletta" class="scaletta"></ol>
+      <p id="scaletta-vuota" class="vuoto" hidden>La scaletta è vuota.</p>
+      <div id="comandi-scaletta" class="comandi" hidden>
+        <button id="btn-aggiungi-voce" class="btn-piccolo">＋ Aggiungi un canto</button>
+        <button id="btn-rinomina-scaletta" class="btn-piccolo">✎ Titolo e data</button>
+        <button id="btn-elimina-scaletta" class="btn-piccolo">🗑 Elimina scaletta</button>
+      </div>
+      <button id="btn-salva-scaletta" class="btn-grande" hidden>Salva la scaletta</button>
     </section>
 
     <!-- Schermata 5: account (accesso per avere i canti su tutti i dispositivi) -->

@@ -222,7 +222,10 @@ const Sync = {
     const { data: neiMieiGruppi } = idCreati.length
       ? await this.client.from('condivisioni').select('allegati').in('gruppo_id', idCreati)
       : { data: [] };
-    for (const c of [...(mie || []), ...(neiMieiGruppi || [])]) {
+    const { data: librettiMiei } = idCreati.length
+      ? await this.client.from('libretto').select('allegati').in('gruppo_id', idCreati)
+      : { data: [] };
+    for (const c of [...(mie || []), ...(neiMieiGruppi || []), ...(librettiMiei || [])]) {
       for (const f of c.allegati || []) percorsi.push(f.percorso);
     }
     for (let i = 0; i < percorsi.length; i += 100) {

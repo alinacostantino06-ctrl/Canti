@@ -979,3 +979,143 @@ a.allegato-nome { color: var(--titoli); font-weight: 700; }
   border-top: 1px solid var(--filetto);
 }
 .zona-pericolo .btn-piccolo { color: var(--pericolo); border-color: var(--pericolo); }
+
+/* ---------- Versione Coro ---------- */
+.coro-stato {
+  margin-bottom: 0.9rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--oro);
+  border-radius: 8px;
+  background: var(--carta-chiara);
+  font-size: 0.9rem;
+}
+.coro-stato p { margin: 0 0 0.5rem; }
+.coro-stato .btn-grande { margin-top: 0.3rem; }
+.coro-stato .dettaglio { color: var(--tenue); font-size: 0.8rem; margin: 0; }
+
+.avvisi { list-style: none; margin: 0 0 0.6rem; padding: 0; }
+.avviso-coro {
+  margin-bottom: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  border-left: 4px solid var(--rubrica);
+  border-radius: 4px;
+  background: var(--carta-chiara);
+}
+.avviso-coro .autore {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--titoli);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.avviso-coro p { margin: 0.2rem 0 0; white-space: pre-wrap; }
+#btn-nuovo-avviso { margin-bottom: 0.8rem; }
+
+.schede {
+  display: flex;
+  gap: 0.3rem;
+  margin: 0.4rem 0 1rem;
+  border-bottom: 2px solid var(--filetto);
+}
+.schede button {
+  flex: 1;
+  padding: 0.6rem 0.2rem;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  background: none;
+  color: var(--tenue);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.schede button.attiva { color: var(--titoli); border-bottom-color: var(--oro); font-weight: 700; }
+
+.nome-libretto {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.nome-libretto .dettaglio { color: var(--tenue); font-size: 0.75rem; }
+#btn-aggiungi-libretto, #btn-nuova-scaletta { margin-top: 0.6rem; }
+.voce-scaletta .dettaglio { color: var(--tenue); font-size: 0.75rem; font-weight: normal; }
+
+/* Scaletta */
+.scaletta { margin: 0 0 1rem; padding: 0; list-style: none; counter-reset: voce; }
+.voce-scaletta-riga {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.5rem;
+  padding: 0.65rem 0.2rem;
+  border-bottom: 1px dotted var(--filetto);
+}
+.voce-scaletta-riga .momento {
+  flex-basis: 100%;
+  color: var(--titoli);
+  font-size: 0.75rem;
+  font-variant: small-caps;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.voce-scaletta-riga .titolo-voce {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--inchiostro);
+  font: inherit;
+  font-size: 1.05rem;
+  text-align: left;
+  cursor: pointer;
+}
+#schermata-scaletta .comandi { margin-bottom: 0.8rem; }
+
+/* Canto aperto da una scaletta: precedente / successivo, sempre a portata di dito */
+.nav-scaletta {
+  position: sticky;
+  bottom: calc(var(--altezza-nav) + env(safe-area-inset-bottom) + 0.5rem);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 1.2rem;
+}
+.nav-scaletta .btn-piccolo {
+  background: var(--bordeaux);
+  color: #f7f1e3;
+  border-color: var(--oro);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+}
+.nav-scaletta #btn-scaletta-dopo { margin-left: auto; }
+
+/* Canti e cartelle del libretto */
+.nota-libretto {
+  margin: -0.4rem 0 0.8rem;
+  color: var(--tenue);
+  font-size: 0.8rem;
+  font-style: italic;
+  text-align: center;
+}
+.scalette-veloci {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+.scalette-veloci button {
+  padding: 0.45rem 0.8rem;
+  border: 1px solid var(--oro);
+  border-radius: 999px;
+  background: var(--carta-chiara);
+  color: var(--inchiostro);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}

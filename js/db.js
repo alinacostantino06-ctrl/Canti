@@ -224,6 +224,12 @@ const Db = {
 
   canto: (id) => operazione('canti', 'readonly', (tx) => tx.objectStore('canti').get(id)),
 
+  // Tutti i canti, compresi quelli dei libretti dei cori (per la ricerca)
+  async tuttiPerRicerca() {
+    const tutti = await operazione('canti', 'readonly', (tx) => tx.objectStore('canti').getAll());
+    return attivi(tutti).sort(perNome('titolo'));
+  },
+
   // Tutti i miei canti (di tutte le sezioni e cartelle), in ordine alfabetico.
   // Le copie dei libretti dei cori non sono "mie": le escludo.
   async tuttiICanti() {

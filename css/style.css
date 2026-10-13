@@ -1224,3 +1224,79 @@ html { touch-action: pan-x pan-y; }
 }
 .scheda-notifiche p { margin: 0 0 0.5rem; font-size: 0.9rem; }
 #invito-notifiche { margin-bottom: 1rem; }
+
+/* ---------- Ricerca di canti e cartelle ---------- */
+.cerca { margin: 0 0 1rem; }
+.cerca input {
+  width: 100%;
+  padding: 0.7rem 1rem 0.7rem 2.6rem;
+  border: 1px solid var(--filetto);
+  border-radius: 999px;
+  background: var(--carta-chiara) no-repeat 0.9rem center / 1.1rem
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a8998a' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.5' y2='16.5'/%3E%3C/svg%3E");
+  color: var(--inchiostro);
+  font: inherit;
+  font-size: 1rem;
+}
+.cerca input:focus { outline: 2px solid var(--oro); outline-offset: 1px; }
+.elenco .dove-sta {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  color: var(--tenue);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.elenco button:has(.dove-sta)::after { margin-left: 0.4rem; }
+
+/* ---------- Alfabeto laterale "a rotella" ---------- */
+.alfabeto {
+  position: fixed;
+  right: 2px;
+  top: calc(4.6rem + env(safe-area-inset-top));
+  bottom: calc(var(--altezza-nav) + env(safe-area-inset-bottom) + 0.6rem);
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  width: 1.55rem;
+  padding: 0.3rem 0;
+  border-radius: 999px;
+  touch-action: none;  /* il dito trascina le lettere, non la pagina */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+}
+.alfabeto.in-uso { background: rgba(110, 26, 34, 0.12); }
+.alfabeto span {
+  color: var(--filetto);
+  font-size: clamp(0.55rem, 2.1vh, 0.75rem);
+  font-weight: 700;
+  line-height: 1;
+}
+.alfabeto span.presente { color: var(--titoli); }
+.alfabeto span.scelta { transform: scale(1.6); color: var(--rubrica); }
+/* con l'alfabeto, l'elenco lascia un po' di spazio a destra */
+body.con-alfabeto #schermata-elenco .elenco { padding-right: 1.4rem; }
+
+/* La lettera grande al centro mentre si scorre */
+.lettera-grande {
+  position: fixed;
+  left: 50%;
+  top: 45%;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  width: 5rem;
+  height: 5rem;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--oro);
+  border-radius: 18px;
+  background: var(--bordeaux);
+  color: #f7f1e3;
+  font-family: var(--font-libro);
+  font-size: 2.8rem;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}

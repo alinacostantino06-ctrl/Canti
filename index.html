@@ -119,6 +119,17 @@
   <main>
     <!-- Schermata 1: elenco dei canti -->
     <section id="schermata-elenco">
+      <!-- Ricerca di canti e cartelle -->
+      <div class="cerca">
+        <input id="cerca-canti" type="search" placeholder="Cerca canti e cartelle…" autocomplete="off"
+          enterkeyhint="search" aria-label="Cerca canti e cartelle">
+      </div>
+      <p id="nessun-risultato" class="vuoto" hidden></p>
+
+      <!-- Alfabeto laterale: si trascina il dito per andare alla lettera -->
+      <nav id="alfabeto" class="alfabeto" aria-label="Vai alla lettera" hidden></nav>
+      <div id="lettera-grande" class="lettera-grande" aria-hidden="true" hidden></div>
+
       <!-- Comandi visibili solo dentro una cartella -->
       <div id="comandi-cartella" class="comandi" hidden>
         <button id="btn-rinomina-cartella" class="btn-piccolo">✎ Rinomina cartella</button>

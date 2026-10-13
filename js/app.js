@@ -42,6 +42,10 @@ if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 // Mostra una sola schermata alla volta
 function mostra(nome, titoloBarra, conIndietro) {
   if (nome !== 'chat') lasciaChat();
+  if (nome !== 'elenco') {
+    $('alfabeto').hidden = true;
+    document.body.classList.remove('con-alfabeto');
+  }
   if (nome !== 'canto' && nome !== 'scaletta') percorsoScaletta = null;
   for (const [chiave, el] of Object.entries(schermate)) el.hidden = chiave !== nome;
   titolo.textContent = titoloBarra;
@@ -141,6 +145,19 @@ function avviso(testo) {
 const senzaEstensione = (nomeFile) => nomeFile.replace(/\.[^.]+$/, '');
 
 // ---------- Elenco (cartelle + canti) ----------
+// Testo "semplificato" per confrontare: senza accenti e senza maiuscole ("È" → "e")
+const semplifica = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+// La lettera dell'indice di un titolo: "Èccomi" → "E"; "...Qual fiore", "1. Santo" → "#"
+function letteraDi(titolo) {
+  const iniziale = semplifica(titolo.trim().charAt(0)).toUpperCase();
+  return /^[A-Z]$/.test(iniziale) ? iniziale : '#';
+}
+
+// Testo cercato nella barra di ricerca (resta quando si apre un canto e si torna indietro)
+let ricerca = '';
+const campoRicerca = $('cerca-canti');
+
 async function mostraElenco() {
   cantoCorrente = null;
   const cartella = cartellaCorrente !== null ? await Db.cartella(cartellaCorrente) : null;
@@ -151,13 +168,19 @@ async function mostraElenco() {
   btnNuovaCartella.hidden = !!cartella;
   await mostraInfoLibretto(cartella);
 
-  // Le cartelle si vedono solo nella "radice" della sezione
-  const cartelle = cartella ? [] : await Db.cartelle();
+  campoRicerca.placeholder = cartella ? 'Cerca in questa cartella…' : 'Cerca canti e cartelle…';
+  if (campoRicerca.value !== ricerca) campoRicerca.value = ricerca;
+  const cercato = semplifica(ricerca.trim());
+
+  // Cartelle: si vedono solo nella schermata principale
+  let cartelle = cartella ? [] : await Db.cartelle();
+  if (cercato) cartelle = cartelle.filter((c) => semplifica(c.nome).includes(cercato));
   elencoCartelle.innerHTML = '';
   for (const c of cartelle) {
     const btn = crea('button', 'voce-cartella', c.nome);
     btn.addEventListener('click', () => {
       cartellaCorrente = c.id;
+      ricerca = '';
       mostraElenco();
     });
     const li = crea('li');
@@ -165,27 +188,127 @@ async function mostraElenco() {
     elencoCartelle.append(li);
   }
 
-  const canti = await Db.canti(cartellaCorrente);
+  // Canti: cercando dalla schermata principale si cerca in tutti, cartelle comprese
+  let canti;
+  if (cercato) {
+    const dove = cartella ? await Db.canti(cartellaCorrente) : await Db.tuttiPerRicerca();
+    canti = dove.filter((c) => semplifica(c.titolo).includes(cercato));
+  } else {
+    canti = await Db.canti(cartellaCorrente);
+  }
+  const nomiCartelle = cercato && !cartella
+    ? new Map((await Db.cartelle()).map((c) => [c.id, c.nome]))
+    : new Map();
+
   elenco.innerHTML = '';
   let letteraPrecedente = '';
   for (const canto of canti) {
-    // Intestazione con l'iniziale, come nell'indice di un libretto.
-    // Se il titolo non comincia con una lettera (es. "...Qual fiore", "1. Santo")
-    // al posto del simbolo si mostra il nome della sezione.
-    const iniziale = canto.titolo.trim().charAt(0).toUpperCase();
-    const lettera = /\p{L}/u.test(iniziale) ? iniziale : NOME_ELENCO;
-    if (lettera !== letteraPrecedente) {
-      elenco.append(crea('li', 'lettera', lettera));
-      letteraPrecedente = lettera;
+    // Intestazione con l'iniziale, come nell'indice di un libretto (non durante la ricerca).
+    // Se il titolo non comincia con una lettera si mostra il nome dell'elenco.
+    if (!cercato) {
+      const lettera = letteraDi(canto.titolo);
+      if (lettera !== letteraPrecedente) {
+        const intestazione = crea('li', 'lettera', lettera === '#' ? NOME_ELENCO : lettera);
+        intestazione.dataset.lettera = lettera;
+        elenco.append(intestazione);
+        letteraPrecedente = lettera;
+      }
     }
     const btn = crea('button', '', canto.titolo);
+    if (cercato && canto.cartella && nomiCartelle.has(canto.cartella)) {
+      btn.append(crea('span', 'dove-sta', '📁 ' + nomiCartelle.get(canto.cartella)));
+    }
     btn.addEventListener('click', () => mostraCanto(canto.id));
     const li = crea('li');
     li.append(btn);
     elenco.append(li);
   }
-  elencoVuoto.hidden = canti.length > 0 || cartelle.length > 0;
+
+  elencoVuoto.hidden = cercato || canti.length > 0 || cartelle.length > 0;
+  $('nessun-risultato').hidden = !cercato || canti.length > 0 || cartelle.length > 0;
+  if (cercato) $('nessun-risultato').textContent = 'Nessun canto o cartella trovati per «' + ricerca.trim() + '».';
+  preparaAlfabeto(cercato ? [] : canti);
 }
+
+// ---------- Ricerca ----------
+let timerRicerca = null;
+campoRicerca.addEventListener('input', () => {
+  clearTimeout(timerRicerca);
+  timerRicerca = setTimeout(() => {
+    ricerca = campoRicerca.value;
+    mostraElenco();
+  }, 150);
+});
+// "Invio" sulla tastiera del telefono: chiude la tastiera
+campoRicerca.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') campoRicerca.blur();
+});
+
+// ---------- Alfabeto laterale "a rotella" ----------
+// Si trascina il dito sulle lettere: l'elenco scorre alla lettera e al centro dello schermo
+// compare la lettera grande. Le lettere senza canti portano alla successiva che ne ha.
+const LETTERE = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+const alfabeto = $('alfabeto');
+const letteraGrande = $('lettera-grande');
+let lettereElenco = [];   // le lettere che hanno canti, in ordine
+let letteraAttuale = null;
+
+function preparaAlfabeto(canti) {
+  lettereElenco = [...new Set(canti.map((c) => letteraDi(c.titolo)))];
+  const mostrare = lettereElenco.length >= 2;
+  alfabeto.hidden = !mostrare;
+  document.body.classList.toggle('con-alfabeto', mostrare);
+  if (!mostrare) return;
+  alfabeto.innerHTML = '';
+  for (const l of LETTERE) {
+    const span = crea('span', lettereElenco.includes(l) ? 'presente' : '', l);
+    span.dataset.lettera = l;
+    alfabeto.append(span);
+  }
+}
+
+// Porta l'elenco alla lettera (o alla prima lettera con canti che viene dopo)
+function vaiAllaLettera(l) {
+  const indice = LETTERE.indexOf(l);
+  const destinazione = lettereElenco.find((x) => LETTERE.indexOf(x) >= indice) || lettereElenco[lettereElenco.length - 1];
+  if (!destinazione || destinazione === letteraAttuale) return;
+  letteraAttuale = destinazione;
+  const intestazione = elenco.querySelector(`.lettera[data-lettera="${destinazione}"]`);
+  if (!intestazione) return;
+  const altezzaBarra = document.querySelector('.barra-alta').offsetHeight;
+  window.scrollTo(0, intestazione.getBoundingClientRect().top + window.scrollY - altezzaBarra - 8);
+  letteraGrande.textContent = destinazione === '#' ? '#' : destinazione;
+  letteraGrande.hidden = false;
+  alfabeto.querySelectorAll('span').forEach((s) => s.classList.toggle('scelta', s.dataset.lettera === destinazione));
+  if (navigator.vibrate) navigator.vibrate(8); // piccolo "scatto", come una rotella
+}
+
+// La lettera sotto il dito, in base all'altezza
+function letteraSotto(y) {
+  const r = alfabeto.getBoundingClientRect();
+  const i = Math.floor(((y - r.top) / r.height) * LETTERE.length);
+  return LETTERE[Math.max(0, Math.min(LETTERE.length - 1, i))];
+}
+
+alfabeto.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  try { alfabeto.setPointerCapture(e.pointerId); } catch (err) { /* va bene lo stesso */ }
+  alfabeto.classList.add('in-uso');
+  letteraAttuale = null;
+  vaiAllaLettera(letteraSotto(e.clientY));
+});
+alfabeto.addEventListener('pointermove', (e) => {
+  if (!alfabeto.classList.contains('in-uso')) return;
+  e.preventDefault();
+  vaiAllaLettera(letteraSotto(e.clientY));
+});
+function fineAlfabeto() {
+  alfabeto.classList.remove('in-uso');
+  letteraGrande.hidden = true;
+  alfabeto.querySelectorAll('.scelta').forEach((s) => s.classList.remove('scelta'));
+}
+alfabeto.addEventListener('pointerup', fineAlfabeto);
+alfabeto.addEventListener('pointercancel', fineAlfabeto);
 
 // ---------- Cartelle ----------
 btnNuovaCartella.addEventListener('click', async () => {
@@ -866,6 +989,7 @@ document.querySelectorAll('.barra-bassa button').forEach((b) => {
     if (b.dataset.sezione === 'gruppi') return mostraGruppi();
     sezioneCorrente = b.dataset.sezione;
     cartellaCorrente = null;
+    ricerca = '';
     evidenziaSezione();
     mostraElenco();
   });
@@ -889,6 +1013,7 @@ btnIndietro.addEventListener('click', () => {
     mostraElenco();
   } else {
     cartellaCorrente = null;
+    ricerca = '';
     mostraElenco();
   }
 });

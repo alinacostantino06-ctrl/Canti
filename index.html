@@ -179,6 +179,7 @@
       <!-- In fondo, così aprendo il canto si vede subito il testo -->
       <div class="comandi comandi-fondo">
         <button id="btn-modifica-canto" class="btn-piccolo">✎ Modifica</button>
+        <button id="btn-condividi-canto" class="btn-piccolo">📤 Condividi</button>
         <button id="btn-sposta-canto" class="btn-piccolo">📁 Sposta</button>
         <button id="btn-elimina-canto" class="btn-piccolo">🗑 Elimina canto</button>
       </div>
@@ -193,6 +194,39 @@
       <ul id="elenco-cestino" class="allegati"></ul>
       <p id="cestino-vuoto" class="vuoto" hidden>Il cestino è vuoto.</p>
       <button id="btn-svuota-cestino" class="btn-tratteggiato" hidden>Svuota il cestino adesso</button>
+    </section>
+
+    <!-- Schermata 6: i miei gruppi -->
+    <section id="schermata-gruppi" hidden>
+      <p id="gruppi-avviso" class="nota-cestino" hidden></p>
+      <button id="btn-gruppi-accedi" class="btn-grande" hidden>Accedi o crea un account</button>
+
+      <div id="gruppi-contenuto" hidden>
+        <p class="nota-cestino">
+          Nei gruppi puoi <strong>condividere i tuoi canti</strong> (con audio e spartiti)
+          e <strong>salvare quelli degli altri</strong> nelle tue cartelle.
+          Per entrare in un gruppo serve il suo codice.
+        </p>
+        <ul id="elenco-gruppi" class="elenco"></ul>
+        <p id="gruppi-vuoto" class="vuoto" hidden>Non sei ancora in nessun gruppo.</p>
+        <button id="btn-crea-gruppo" class="btn-grande">＋ Crea un gruppo</button>
+        <button id="btn-entra-gruppo" class="btn-tratteggiato">🔑 Entra con un codice</button>
+      </div>
+    </section>
+
+    <!-- Schermata 7: chat di un gruppo -->
+    <section id="schermata-chat" hidden>
+      <div class="testa-chat">
+        <span>Codice: <strong id="chat-codice"></strong></span>
+        <button id="btn-invita" class="btn-piccolo">📨 Invita</button>
+        <button id="btn-membri" class="btn-piccolo">👥 Chi c'è</button>
+      </div>
+      <p id="chat-avviso" class="stato-sync errore" hidden></p>
+      <ul id="elenco-chat" class="chat"></ul>
+      <p id="chat-vuota" class="vuoto" hidden>Nessun canto condiviso ancora.<br>Inizia tu!</p>
+      <div class="barra-chat">
+        <button id="btn-condividi-qui" class="btn-grande">♪ Condividi un canto</button>
+      </div>
     </section>
 
     <!-- Schermata 5: account (accesso per avere i canti su tutti i dispositivi) -->
@@ -248,6 +282,25 @@
     <div id="scelta-opzioni" class="scelta-opzioni"></div>
   </dialog>
 
+  <!-- Finestrella per scegliere uno dei miei canti (da condividere) -->
+  <dialog id="dialogo-canti" class="dialogo dialogo-alto">
+    <p>Quale canto vuoi condividere?</p>
+    <input id="cerca-canto" type="search" placeholder="Cerca per titolo…" autocomplete="off">
+    <ul id="lista-canti" class="lista-scelta"></ul>
+    <div class="dialogo-azioni">
+      <button id="chiudi-dialogo-canti" class="btn-piccolo">Annulla</button>
+    </div>
+  </dialog>
+
+  <!-- Finestrella per leggere un canto ricevuto in un gruppo -->
+  <dialog id="dialogo-anteprima" class="dialogo dialogo-alto">
+    <p id="anteprima-titolo"></p>
+    <pre id="anteprima-testo" class="anteprima-testo"></pre>
+    <div class="dialogo-azioni">
+      <button id="chiudi-anteprima" class="btn-piccolo">Chiudi</button>
+    </div>
+  </dialog>
+
   <!-- Avviso che compare per qualche secondo in basso -->
   <div id="avviso" class="avviso" role="status" hidden></div>
 
@@ -255,6 +308,9 @@
   <nav class="barra-bassa">
     <button data-sezione="prove" class="attivo"><b aria-hidden="true">♪</b><span>Canti prove</span></button>
     <button data-sezione="chiesa"><b aria-hidden="true">✝</b><span>Canti chiesa</span></button>
+    <button data-sezione="gruppi">
+      <b aria-hidden="true">✉&#xFE0E;<i id="pallino-gruppi" class="pallino nuovo" hidden></i></b><span>Gruppi</span>
+    </button>
     <button data-sezione="cestino"><b aria-hidden="true">🗑&#xFE0E;</b><span>Cestino</span></button>
     <button data-sezione="account">
       <b aria-hidden="true">☁&#xFE0E;<i id="pallino-sync" class="pallino" hidden></i></b><span>Account</span>
@@ -266,6 +322,7 @@
   <script src="js/config.js"></script>
   <script src="js/db.js"></script>
   <script src="js/sync.js"></script>
+  <script src="js/gruppi.js"></script>
   <script src="js/pdf-import.js"></script>
   <script src="js/app.js"></script>
 </body>

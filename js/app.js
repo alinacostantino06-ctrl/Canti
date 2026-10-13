@@ -30,6 +30,8 @@ const schermate = {
   canto: $('schermata-canto'),
   cestino: $('schermata-cestino'),
   account: $('schermata-account'),
+  gruppi: $('schermata-gruppi'),
+  chat: $('schermata-chat'),
 };
 
 // Chiede al browser di non cancellare mai i dati salvati (utile per gli audio,
@@ -38,6 +40,7 @@ if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 
 // Mostra una sola schermata alla volta
 function mostra(nome, titoloBarra, conIndietro) {
+  if (nome !== 'chat') lasciaChat();
   for (const [chiave, el] of Object.entries(schermate)) el.hidden = chiave !== nome;
   titolo.textContent = titoloBarra;
   btnIndietro.hidden = !conIndietro;
@@ -56,6 +59,7 @@ function crea(tag, classe, testo) {
 // ---------- Finestrella per chiedere un nome ----------
 // Restituisce il nome scritto, oppure null se si preme "Annulla".
 // Con { password: true } quello che si scrive viene nascosto.
+// Con { facoltativo: true } si può confermare anche senza scrivere niente (restituisce "").
 function chiediNome(domanda, valoreIniziale = '', opzioni = {}) {
   const dialogo = $('dialogo-nome');
   const campo = $('dialogo-valore');
@@ -78,7 +82,7 @@ function chiediNome(domanda, valoreIniziale = '', opzioni = {}) {
       e.preventDefault();
       const ok = !e.submitter || e.submitter.value === 'ok';
       const nome = campo.value.trim();
-      fine(ok && nome !== '' ? nome : null);
+      fine(!ok ? null : nome !== '' ? nome : opzioni.facoltativo ? '' : null);
     };
     // Tasto Esc o gesto "indietro"
     dialogo.oncancel = (e) => {
@@ -370,6 +374,9 @@ $('btn-sposta-canto').addEventListener('click', async () => {
   mostraCanto(cantoCorrente);
   avviso('Canto spostato.');
 });
+
+// ---------- Condividi canto in un gruppo ----------
+$('btn-condividi-canto').addEventListener('click', () => condividiCanto(cantoCorrente));
 
 // ---------- Modifica canto ----------
 $('btn-modifica-canto').addEventListener('click', () => mostraModulo(cantoCorrente));
@@ -855,6 +862,7 @@ document.querySelectorAll('.barra-bassa button').forEach((b) => {
   b.addEventListener('click', () => {
     if (b.dataset.sezione === 'cestino') return mostraCestino();
     if (b.dataset.sezione === 'account') return mostraAccount();
+    if (b.dataset.sezione === 'gruppi') return mostraGruppi();
     sezioneCorrente = b.dataset.sezione;
     cartellaCorrente = null;
     evidenziaSezione();
@@ -867,7 +875,9 @@ btnAggiungi.addEventListener('click', () => mostraModulo());
 // "Indietro": dalla modifica si torna al canto; dal canto o dal modulo all'elenco;
 // da una cartella alla sezione
 btnIndietro.addEventListener('click', () => {
-  if (!schermate.modulo.hidden && idInModifica !== null) {
+  if (!schermate.chat.hidden) {
+    mostraGruppi();
+  } else if (!schermate.modulo.hidden && idInModifica !== null) {
     mostraCanto(idInModifica);
   } else if (schermate.elenco.hidden) {
     mostraElenco();
@@ -1063,6 +1073,415 @@ $('btn-esci').addEventListener('click', async () => {
 });
 
 $('btn-vai-accesso').addEventListener('click', () => apriIniziale(true));
+
+// ---------- Gruppi: condividere i canti ----------
+
+const URL_APP = location.origin + location.pathname;
+let gruppoCorrente = null;     // gruppo aperto nella chat
+let smettiDiAscoltare = null;  // per chiudere la chat "in diretta"
+let timerChat = null;
+let caricamentoChat = 0;
+
+function lasciaChat() {
+  if (smettiDiAscoltare) {
+    try { smettiDiAscoltare(); } catch (e) { /* niente */ }
+    smettiDiAscoltare = null;
+  }
+  clearInterval(timerChat);
+  timerChat = null;
+}
+
+// Il nome con cui gli altri ti vedono: chiesto una volta sola
+async function chiediMioNome() {
+  let nome = await Gruppi.mioNome();
+  if (nome) return nome;
+  nome = await chiediNome('Come ti chiami? Gli altri del gruppo vedranno questo nome accanto ai canti che condividi.');
+  if (nome) await Gruppi.salvaMioNome(nome);
+  return nome;
+}
+
+async function mostraGruppi() {
+  mostra('gruppi', 'Gruppi', false);
+  evidenziaSezione('gruppi');
+  const nota = $('gruppi-avviso');
+  const contenuto = $('gruppi-contenuto');
+  $('btn-gruppi-accedi').hidden = true;
+
+  if (!Gruppi.disponibili()) {
+    nota.textContent = Sync.stato === 'spento'
+      ? "I gruppi funzionano con l'accesso online, che in questa app non è attivo."
+      : "Per usare i gruppi serve l'accesso: così gli altri sanno chi condivide i canti.";
+    nota.hidden = false;
+    contenuto.hidden = true;
+    $('btn-gruppi-accedi').hidden = Sync.stato === 'spento';
+    return;
+  }
+  if (!navigator.onLine) {
+    nota.textContent = '📴 I gruppi funzionano solo con internet. Riprova quando torna la connessione.';
+    nota.hidden = false;
+    contenuto.hidden = true;
+    return;
+  }
+
+  nota.hidden = true;
+  contenuto.hidden = false;
+  const lista = $('elenco-gruppi');
+  try {
+    const gruppi = await Gruppi.miei();
+    const nuovi = await Gruppi.novita(gruppi).catch(() => ({}));
+    lista.innerHTML = '';
+    for (const g of gruppi) {
+      const btn = crea('button', 'voce-gruppo', g.nome);
+      if (nuovi[g.id]) btn.append(crea('span', 'nuovi', nuovi[g.id] === 1 ? '1 nuovo' : `${nuovi[g.id]} nuovi`));
+      btn.addEventListener('click', () => apriChat(g));
+      const li = crea('li');
+      li.append(btn);
+      lista.append(li);
+    }
+    $('gruppi-vuoto').hidden = gruppi.length > 0;
+    $('pallino-gruppi').hidden = !Object.values(nuovi).some((n) => n > 0);
+  } catch (err) {
+    nota.textContent = '⚠ ' + err.message;
+    nota.hidden = false;
+  }
+}
+
+$('btn-gruppi-accedi').addEventListener('click', () => apriIniziale(true));
+
+$('btn-crea-gruppo').addEventListener('click', async () => {
+  const nomeGruppo = await chiediNome('Nome del nuovo gruppo (es. «Coro parrocchia»)');
+  if (!nomeGruppo) return;
+  const mioNome = await chiediMioNome();
+  if (!mioNome) return;
+  try {
+    const g = await Gruppi.crea(nomeGruppo, mioNome);
+    await apriChat(g);
+    const scelta = await chiediScelta(
+      `Gruppo creato! Il codice per entrare è:\n\n${g.codice}\n\nMandalo a chi vuoi invitare.`,
+      [{ valore: 'invita', testo: '📨 Invita adesso' }], 'Più tardi');
+    if (scelta) invita(g);
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+});
+
+$('btn-entra-gruppo').addEventListener('click', async () => {
+  const codice = await chiediNome('Scrivi il codice del gruppo (6 lettere e numeri, es. K7PMQ2)');
+  if (!codice) return;
+  const mioNome = await chiediMioNome();
+  if (!mioNome) return;
+  try {
+    const g = await Gruppi.entra(codice.replace(/\s+/g, ''), mioNome);
+    avviso(`Ora fai parte di «${g.nome}»!`);
+    apriChat(g);
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+});
+
+// Invito: con il menu "Condividi" del telefono (WhatsApp, SMS…) oppure copiato da incollare
+async function invita(g) {
+  const testo = `Entra nel gruppo «${g.nome}» per condividere i canti con l'app Canta con noi!\n` +
+    `1. Apri ${URL_APP}\n2. Accedi (o crea un account)\n3. Tocca «Gruppi» → «Entra con un codice»\n` +
+    `4. Scrivi il codice: ${g.codice}`;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Canta con noi', text: testo });
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(testo);
+    avviso('Invito copiato: incollalo in un messaggio (es. su WhatsApp).');
+  } catch (e) {
+    await chiediScelta(testo, [], 'Chiudi');
+  }
+}
+
+async function apriChat(g) {
+  gruppoCorrente = g;
+  mostra('chat', g.nome, true);
+  evidenziaSezione('gruppi');
+  $('chat-codice').textContent = g.codice;
+  $('elenco-chat').innerHTML = '';
+  $('chat-vuota').hidden = true;
+  await caricaChat(true);
+  // messaggi nuovi "in diretta"; e comunque ricontrollo ogni 20 secondi
+  try { smettiDiAscoltare = Gruppi.ascolta(g.id, () => caricaChat()); } catch (e) { /* va bene lo stesso */ }
+  timerChat = setInterval(() => caricaChat(), 20000);
+}
+
+async function caricaChat(vaiInFondo = false) {
+  const g = gruppoCorrente;
+  if (!g || schermate.chat.hidden) return;
+  const mio = ++caricamentoChat;
+  const nota = $('chat-avviso');
+  try {
+    const [lista, salvati] = await Promise.all([Gruppi.condivisioni(g.id), Gruppi.giaSalvati()]);
+    if (mio !== caricamentoChat || gruppoCorrente !== g) return;
+    nota.hidden = true;
+    const eraInFondo = vaiInFondo || window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+    disegnaChat(lista, salvati);
+    if (eraInFondo) window.scrollTo(0, document.body.scrollHeight);
+    if (lista.length) {
+      await Gruppi.segnaVisto(g.id, lista[lista.length - 1].creato);
+      aggiornaNovita();
+    }
+  } catch (err) {
+    nota.textContent = navigator.onLine ? '⚠ ' + err.message : '📴 Senza internet la chat non si aggiorna.';
+    nota.hidden = false;
+  }
+}
+
+const formatoOra = (d) => d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+
+function disegnaChat(lista, salvati) {
+  const ul = $('elenco-chat');
+  ul.innerHTML = '';
+  $('chat-vuota').hidden = lista.length > 0;
+  let giornoPrecedente = '';
+
+  for (const c of lista) {
+    const quando = new Date(c.creato);
+    const giorno = quando.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+    if (giorno !== giornoPrecedente) {
+      ul.append(crea('li', 'giorno-chat', giorno));
+      giornoPrecedente = giorno;
+    }
+
+    const mio = c.user_id === Sync.utente.id;
+    const li = crea('li', 'messaggio' + (mio ? ' mio' : ''));
+    li.append(crea('div', 'autore', `${mio ? 'Tu' : c.autore} · ${formatoOra(quando)}`));
+    if (c.messaggio) li.append(crea('p', 'testo-messaggio', c.messaggio));
+
+    const scheda = crea('div', 'scheda-canto');
+    scheda.append(crea('div', 'titolo-condiviso', '♪ ' + c.titolo));
+    const files = c.allegati || [];
+    const quanti = (tipo) => files.filter((f) => f.tipo === tipo).length;
+    const parti = [NOMI_SEZIONI[c.sezione] || 'Canto'];
+    if (c.testo.trim()) parti.push(analizzaTesto(c.testo).conAccordi ? 'testo con accordi' : 'testo');
+    if (quanti('audio')) parti.push(`🎵 ${quanti('audio')}`);
+    if (quanti('spartito')) parti.push(`🎼 ${quanti('spartito')}`);
+    if (quanti('pdf')) parti.push(`📄 ${quanti('pdf')}`);
+    scheda.append(crea('div', 'dettaglio', parti.join(' · ')));
+
+    const azioni = crea('div', 'azioni-chat');
+    if (c.testo.trim()) {
+      const leggi = crea('button', 'btn-piccolo', '👁 Leggi');
+      leggi.addEventListener('click', () => mostraAnteprima(c));
+      azioni.append(leggi);
+    }
+    // (i canti che ho condiviso io sono già tra i miei: per quelli niente "Salva")
+    if (!mio) {
+      const salva = crea('button', 'btn-piccolo salva', salvati.has(c.id) ? '✓ Salvato' : '⬇ Salva nei miei canti');
+      salva.addEventListener('click', () => salvaCondiviso(c, salva));
+      azioni.append(salva);
+    } else {
+      const togli = crea('button', 'btn-mini', '🗑');
+      togli.title = 'Togli dalla chat';
+      togli.addEventListener('click', async () => {
+        const scelta = await chiediScelta(`Togliere «${c.titolo}» dalla chat del gruppo?\n\n` +
+          'Chi l\'ha già salvato lo tiene; il tuo canto resta tra i tuoi canti.',
+          [{ valore: 'togli', testo: 'Togli dalla chat', pericolo: true }]);
+        if (!scelta) return;
+        try {
+          await Gruppi.elimina(c);
+          caricaChat();
+        } catch (err) {
+          avviso('⚠ ' + err.message);
+        }
+      });
+      azioni.append(togli);
+    }
+    scheda.append(azioni);
+    li.append(scheda);
+    ul.append(li);
+  }
+}
+
+function mostraAnteprima(c) {
+  const dialogo = $('dialogo-anteprima');
+  $('anteprima-titolo').textContent = c.titolo;
+  $('anteprima-testo').textContent = c.testo;
+  dialogo.showModal();
+}
+$('chiudi-anteprima').addEventListener('click', () => $('dialogo-anteprima').close());
+
+// Dove salvare un canto ricevuto: una sezione, una sua cartella, o una cartella nuova
+async function chiediDestinazione(c) {
+  const sezioni = [c.sezione, ...Object.keys(NOMI_SEZIONI).filter((x) => x !== c.sezione)]
+    .filter((x) => NOMI_SEZIONI[x]);
+  const opzioni = [];
+  for (const sezione of sezioni) {
+    opzioni.push({ valore: { sezione, cartella: null }, testo: `${NOMI_SEZIONI[sezione]} (fuori dalle cartelle)` });
+    for (const cart of await Db.cartelle(sezione)) {
+      opzioni.push({ valore: { sezione, cartella: cart.id, nomeCartella: cart.nome },
+        testo: `${NOMI_SEZIONI[sezione]} › 📁 ${cart.nome}` });
+    }
+    opzioni.push({ valore: { sezione, nuova: true }, testo: `＋ Nuova cartella in ${NOMI_SEZIONI[sezione]}` });
+  }
+  const scelta = await chiediScelta(`Dove vuoi salvare «${c.titolo}»?`, opzioni);
+  if (!scelta || !scelta.nuova) return scelta;
+  const nome = await chiediNome(`Nome della nuova cartella in ${NOMI_SEZIONI[scelta.sezione]}`);
+  if (!nome) return null;
+  const id = await Db.aggiungiCartella(nome, scelta.sezione);
+  return { sezione: scelta.sezione, cartella: id, nomeCartella: nome };
+}
+
+async function salvaCondiviso(c, pulsante) {
+  const dove = await chiediDestinazione(c);
+  if (!dove) return;
+  pulsante.disabled = true;
+  pulsante.textContent = '⏳ Salvataggio…';
+  try {
+    await Gruppi.salva(c, dove, (testo) => (pulsante.textContent = '⏳ ' + testo));
+    const posto = NOMI_SEZIONI[dove.sezione] + (dove.nomeCartella ? ' › ' + dove.nomeCartella : '');
+    avviso(`«${c.titolo}» salvato in ${posto}.`);
+    pulsante.textContent = '✓ Salvato';
+  } catch (err) {
+    avviso('⚠ Salvataggio non riuscito: ' + err.message);
+    pulsante.textContent = '⬇ Salva nei miei canti';
+  } finally {
+    pulsante.disabled = false;
+  }
+}
+
+// Scelta di uno dei miei canti (con ricerca per titolo)
+function scegliCanto() {
+  const dialogo = $('dialogo-canti');
+  const cerca = $('cerca-canto');
+  const lista = $('lista-canti');
+  return new Promise(async (resolve) => {
+    const canti = await Db.tuttiICanti();
+    const fine = (valore) => {
+      dialogo.oncancel = null;
+      dialogo.close();
+      resolve(valore);
+    };
+    const disegna = () => {
+      const testo = cerca.value.trim().toLowerCase();
+      lista.innerHTML = '';
+      const trovati = canti.filter((c) => c.titolo.toLowerCase().includes(testo));
+      for (const c of trovati) {
+        const btn = crea('button', '', c.titolo);
+        btn.append(crea('span', 'dettaglio', NOMI_SEZIONI[c.sezione]));
+        btn.addEventListener('click', () => fine(c.id));
+        const li = crea('li');
+        li.append(btn);
+        lista.append(li);
+      }
+      if (!trovati.length) lista.append(crea('li', 'dettaglio', canti.length ? 'Nessun canto trovato.' : 'Non hai ancora canti.'));
+    };
+    cerca.value = '';
+    cerca.oninput = disegna;
+    disegna();
+    $('chiudi-dialogo-canti').onclick = () => fine(null);
+    dialogo.oncancel = (e) => {
+      e.preventDefault();
+      fine(null);
+    };
+    dialogo.showModal();
+  });
+}
+
+$('btn-condividi-qui').addEventListener('click', async () => {
+  const id = await scegliCanto();
+  if (id) condividiCanto(id, gruppoCorrente);
+});
+
+// Condivide un mio canto in un gruppo (se il gruppo non è indicato, lo chiede)
+async function condividiCanto(cantoId, gruppo = null) {
+  if (!Gruppi.disponibili()) {
+    const scelta = await chiediScelta("Per condividere i canti serve l'accesso.",
+      [{ valore: 'accedi', testo: 'Accedi o crea un account' }]);
+    if (scelta) apriIniziale(true);
+    return;
+  }
+  if (!navigator.onLine) return avviso('📴 Per condividere serve internet.');
+
+  if (!gruppo) {
+    let gruppi;
+    try {
+      gruppi = await Gruppi.miei();
+    } catch (err) {
+      return avviso('⚠ ' + err.message);
+    }
+    if (!gruppi.length) {
+      const scelta = await chiediScelta('Non sei ancora in nessun gruppo: creane uno o entra con un codice.',
+        [{ valore: 'vai', testo: '✉ Vai ai Gruppi' }]);
+      if (scelta) mostraGruppi();
+      return;
+    }
+    gruppo = await chiediScelta('In quale gruppo vuoi condividere il canto?',
+      gruppi.map((g) => ({ valore: g, testo: '✉ ' + g.nome })));
+    if (!gruppo) return;
+  }
+
+  const canto = await Db.canto(cantoId);
+  const messaggio = await chiediNome(
+    `Vuoi aggiungere un messaggio per «${gruppo.nome}»? (facoltativo, es. «Lo facciamo domenica»)`,
+    '', { facoltativo: true });
+  if (messaggio === null) return;
+
+  avviso('Invio in corso…');
+  try {
+    await Gruppi.condividi(gruppo.id, cantoId, messaggio, (testo) => avviso(testo));
+    avviso(`«${canto.titolo}» condiviso in «${gruppo.nome}».`);
+    if (gruppoCorrente && gruppoCorrente.id === gruppo.id && !schermate.chat.hidden) caricaChat(true);
+  } catch (err) {
+    avviso('⚠ Condivisione non riuscita: ' + err.message);
+  }
+}
+
+$('btn-invita').addEventListener('click', () => gruppoCorrente && invita(gruppoCorrente));
+
+$('btn-membri').addEventListener('click', async () => {
+  const g = gruppoCorrente;
+  if (!g) return;
+  let membri;
+  try {
+    membri = await Gruppi.membri(g.id);
+  } catch (err) {
+    return avviso('⚠ ' + err.message);
+  }
+  const elencoNomi = membri.map((m) => '• ' + m.nome + (m.user_id === Sync.utente.id ? ' (tu)' : '')).join('\n');
+  const scelta = await chiediScelta(`Nel gruppo «${g.nome}» ci sono:\n\n${elencoNomi}\n\nCodice per entrare: ${g.codice}`,
+    [{ valore: 'esci', testo: 'Esci dal gruppo', pericolo: true }], 'Chiudi');
+  if (!scelta) return;
+  const conferma = await chiediScelta(`Uscire da «${g.nome}»?\n\nNon vedrai più la sua chat. I canti che hai già salvato restano tuoi.`,
+    [{ valore: 'si', testo: 'Esci dal gruppo', pericolo: true }]);
+  if (!conferma) return;
+  try {
+    await Gruppi.esci(g.id);
+    gruppoCorrente = null;
+    avviso(`Hai lasciato il gruppo «${g.nome}».`);
+    mostraGruppi();
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+});
+
+// Pallino sulla voce "Gruppi" quando ci sono canti nuovi (controllato al massimo ogni minuto)
+let ultimoControlloNovita = 0;
+async function aggiornaNovita(forza = false) {
+  const pallino = $('pallino-gruppi');
+  if (!Gruppi.disponibili() || !navigator.onLine) {
+    pallino.hidden = true;
+    return;
+  }
+  if (!forza && Date.now() - ultimoControlloNovita < 60000) return;
+  ultimoControlloNovita = Date.now();
+  try {
+    const nuovi = await Gruppi.novita(await Gruppi.miei());
+    pallino.hidden = !Object.values(nuovi).some((n) => n > 0);
+  } catch (e) { /* riproverò */ }
+}
+Sync.quandoCambiaStato((stato) => {
+  if (stato === 'ok') aggiornaNovita();
+  if (!Sync.utente) $('pallino-gruppi').hidden = true;
+});
 
 // ---------- Pagina iniziale ----------
 // Prima si vedono solo la croce e "Canta con noi". Toccandolo:

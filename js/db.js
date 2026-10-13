@@ -80,8 +80,23 @@ function apriDb() {
       }
     };
 
-    richiesta.onsuccess = () => resolve(richiesta.result);
+    richiesta.onsuccess = () => {
+      const db = richiesta.result;
+      // Se un'altra finestra dell'app (più nuova) deve aggiornare il database,
+      // chiudo il mio collegamento per non bloccarla; alla prossima operazione lo riapro.
+      db.onversionchange = () => {
+        db.close();
+        connessione = null;
+      };
+      resolve(db);
+    };
     richiesta.onerror = () => reject(richiesta.error);
+    // Un'altra finestra dell'app, rimasta aperta con la versione vecchia, blocca l'aggiornamento
+    richiesta.onblocked = () => {
+      if (typeof avviso === 'function') {
+        avviso("Chiudi le altre finestre di questa app per completare l'aggiornamento.");
+      }
+    };
   });
   return connessione;
 }
@@ -207,6 +222,12 @@ const Db = {
   },
 
   canto: (id) => operazione('canti', 'readonly', (tx) => tx.objectStore('canti').get(id)),
+
+  // Tutti i canti (di tutte le sezioni e cartelle), in ordine alfabetico
+  async tuttiICanti() {
+    const tutti = await operazione('canti', 'readonly', (tx) => tx.objectStore('canti').getAll());
+    return attivi(tutti).sort(perNome('titolo'));
+  },
 
   // Salva un nuovo canto e restituisce il suo id
   async aggiungiCanto(canto) {

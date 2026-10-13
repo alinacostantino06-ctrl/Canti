@@ -10,7 +10,7 @@
 // Se aggiungi un NUOVO file all'app (es. un altro .js), aggiungilo a FILE_APP
 // e cambia il numero di VERSIONE.
 
-const VERSIONE = 'canti-v2';
+const VERSIONE = 'canti-v3';
 
 const FILE_APP = [
   './',
@@ -20,6 +20,7 @@ const FILE_APP = [
   'js/config.js',
   'js/db.js',
   'js/sync.js',
+  'js/gruppi.js',
   'js/pdf-import.js',
   'js/app.js',
   'lib/pdf.min.js',

@@ -802,3 +802,137 @@ a.allegato-nome { color: var(--titoli); font-weight: 700; }
   cursor: pointer;
 }
 #account-fuori .btn-grande { margin-top: 0.4rem; }
+
+/* ---------- Gruppi e chat ---------- */
+.elenco .voce-gruppo { font-weight: 700; }
+.elenco .voce-gruppo::before { content: "✉\FE0E"; color: var(--oro); }
+.voce-gruppo .nuovi {
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  background: var(--rubrica);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+#elenco-gruppi:not(:empty) { margin-bottom: 1.2rem; }
+#btn-entra-gruppo { margin-top: 0.8rem; }
+
+.testa-chat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+  color: var(--tenue);
+  font-size: 0.85rem;
+}
+.testa-chat span { flex: 1; min-width: 8rem; }
+.testa-chat strong { color: var(--titoli); letter-spacing: 0.12em; }
+
+.chat {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.giorno-chat {
+  align-self: center;
+  margin-top: 0.5rem;
+  padding: 0.2rem 0.8rem;
+  border-radius: 999px;
+  background: var(--carta-chiara);
+  color: var(--tenue);
+  font-size: 0.75rem;
+}
+.messaggio {
+  align-self: flex-start;
+  max-width: 88%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--filetto);
+  border-radius: 4px 14px 14px 14px;
+  background: var(--carta-chiara);
+}
+.messaggio.mio {
+  align-self: flex-end;
+  border-radius: 14px 4px 14px 14px;
+  border-color: var(--oro);
+}
+.messaggio .autore {
+  color: var(--titoli);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.testo-messaggio {
+  margin: 0.25rem 0 0.4rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.scheda-canto {
+  margin-top: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border-left: 3px solid var(--oro);
+  border-radius: 4px;
+  background: var(--carta);
+}
+.titolo-condiviso { font-weight: 700; overflow-wrap: anywhere; }
+.scheda-canto .dettaglio { color: var(--tenue); font-size: 0.78rem; }
+.azioni-chat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.azioni-chat .btn-piccolo { padding: 0.4rem 0.75rem; font-size: 0.8rem; }
+.azioni-chat .salva { border-color: var(--oro); font-weight: 700; }
+
+/* Il pulsante per condividere resta sempre visibile sopra la barra in basso */
+.barra-chat {
+  position: sticky;
+  bottom: calc(var(--altezza-nav) + env(safe-area-inset-bottom) + 0.6rem);
+  margin-top: 1rem;
+  padding-top: 0.4rem;
+}
+.barra-chat .btn-grande { box-shadow: inset 0 0 0 2px var(--oro), 0 4px 14px rgba(0, 0, 0, 0.25); }
+
+/* Pallino "canti nuovi" sulla voce Gruppi */
+.pallino.nuovo { background: #f0b429; }
+
+/* Finestrelle più alte (scelta di un canto, lettura) */
+.dialogo-alto { max-height: 85vh; }
+.dialogo-alto[open] { display: flex; flex-direction: column; }
+.dialogo input[type="search"] { margin-bottom: 0.6rem; }
+.lista-scelta {
+  flex: 1;
+  min-height: 6rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.lista-scelta button {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.7rem 0.3rem;
+  border: 0;
+  border-bottom: 1px dotted var(--filetto);
+  background: none;
+  color: var(--inchiostro);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lista-scelta .dettaglio { flex: none; color: var(--tenue); font-size: 0.75rem; }
+.anteprima-testo {
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  font-family: var(--font-canto);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: pre;
+}

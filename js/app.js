@@ -1062,19 +1062,23 @@ $('btn-esci').addEventListener('click', async () => {
   apriIniziale();
 });
 
-$('btn-vai-accesso').addEventListener('click', apriIniziale);
+$('btn-vai-accesso').addEventListener('click', () => apriIniziale(true));
 
 // ---------- Pagina iniziale ----------
-// Se l'accesso è già salvato (o l'accesso online non è attivo) c'è "Canta con noi";
-// altrimenti c'è il modulo per accedere o creare un account.
+// Prima si vedono solo la croce e "Canta con noi". Toccandolo:
+//   - se l'accesso è già salvato (o l'accesso online non è attivo) si entra nei canti;
+//   - altrimenti compare il modulo per iscriversi o accedere.
 const paginaIniziale = $('pagina-iniziale');
+let moduloAperto = false; // il modulo di accesso è visibile sulla pagina iniziale?
+
+const serveAccesso = () => Sync.stato !== 'spento' && !Sync.utente;
 
 function aggiornaIniziale() {
   const dentro = !!Sync.utente;
-  const conModulo = Sync.stato !== 'spento' && !dentro;
-  $('modulo-accesso').hidden = !conModulo;
-  $('iniziale-entra').hidden = conModulo;
-  paginaIniziale.classList.toggle('con-accesso', conModulo);
+  if (!serveAccesso()) moduloAperto = false;
+  $('modulo-accesso').hidden = !moduloAperto;
+  $('iniziale-entra').hidden = moduloAperto;
+  paginaIniziale.classList.toggle('con-accesso', moduloAperto);
   $('iniziale-utente').hidden = !dentro;
   if (dentro) $('iniziale-utente').textContent = '✓ Accesso salvato: ' + Sync.utente.email;
 }
@@ -1083,14 +1087,20 @@ function chiudiIniziale() {
   paginaIniziale.classList.add('chiusa');
 }
 
-function apriIniziale() {
+// conModulo = true: si apre direttamente il modulo di accesso (es. da "Accedi" nella pagina Account)
+function apriIniziale(conModulo = false) {
+  moduloAperto = conModulo === true && serveAccesso();
   aggiornaIniziale();
   paginaIniziale.classList.remove('chiusa');
   paginaIniziale.scrollTop = 0;
 }
 
-// Toccando "Canta con noi" (o "Continua senza account") la pagina rossa sfuma e appare l'elenco
-$('btn-entra').addEventListener('click', chiudiIniziale);
+$('btn-entra').addEventListener('click', () => {
+  if (!serveAccesso()) return chiudiIniziale();
+  moduloAperto = true;
+  aggiornaIniziale();
+  $('modulo-accesso').email.focus();
+});
 $('btn-senza-account').addEventListener('click', () => {
   messaggioAccount('');
   chiudiIniziale();

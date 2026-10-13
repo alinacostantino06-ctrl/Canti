@@ -65,12 +65,19 @@
     <section id="schermata-modulo" hidden>
       <div id="blocco-importa">
       <div class="importa">
-        <label class="btn-pdf">
-          📄 Carica PDF
-          <input id="file-pdf" type="file" accept="application/pdf,.pdf" hidden>
-        </label>
+        <div class="pulsanti-importa">
+          <label class="btn-pdf">
+            📄 Testo da PDF
+            <input id="file-pdf" type="file" accept="application/pdf,.pdf" hidden>
+          </label>
+          <label class="btn-pdf">
+            🎼 Carica spartito
+            <input id="file-spartito" type="file" accept="application/pdf,.pdf,image/*" hidden>
+          </label>
+        </div>
         <p id="stato-pdf" class="stato-pdf">
-          Il testo verrà letto in automatico: controllalo e poi salva.
+          «Testo da PDF» legge parole e accordi. «Carica spartito» mostra le note
+          così come sono (PDF o foto).
         </p>
       </div>
 
@@ -100,7 +107,7 @@
         </label>
         <p id="info-accordi" class="info-accordi"></p>
         <div id="campo-allegati" class="campo">
-          <span class="etichetta">Audio e PDF allegati</span>
+          <span class="etichetta">Audio, PDF e spartiti allegati</span>
           <ul id="file-in-attesa" class="allegati"></ul>
           <label class="btn-piccolo">
             🎵 Aggiungi audio
@@ -122,6 +129,10 @@
           🎵 Aggiungi audio
           <input id="file-audio-canto" type="file" accept="audio/*" multiple hidden>
         </label>
+        <label class="btn-piccolo">
+          🎼 Aggiungi spartito
+          <input id="file-spartito-canto" type="file" accept="application/pdf,.pdf,image/*" hidden>
+        </label>
         <!-- Grandezza del testo -->
         <div class="zoom-testo">
           <button id="btn-testo-meno" class="btn-mini" aria-label="Testo più piccolo">A−</button>
@@ -129,6 +140,9 @@
           <button id="btn-testo-piu" class="btn-mini grande" aria-label="Testo più grande">A+</button>
         </div>
       </div>
+
+      <!-- Spartiti (pentagramma con le note), mostrati così come sono -->
+      <div id="spartiti-canto" class="spartiti"></div>
 
       <div id="testo-canto" class="testo-canto"></div>
 
@@ -149,6 +163,53 @@
       <ul id="elenco-cestino" class="allegati"></ul>
       <p id="cestino-vuoto" class="vuoto" hidden>Il cestino è vuoto.</p>
       <button id="btn-svuota-cestino" class="btn-tratteggiato" hidden>Svuota il cestino adesso</button>
+    </section>
+
+    <!-- Schermata 5: account (accesso per avere i canti su tutti i dispositivi) -->
+    <section id="schermata-account" hidden>
+      <!-- L'accesso online non è configurato (js/config.js vuoto) -->
+      <div id="account-spento" hidden>
+        <p class="nota-cestino">
+          L'accesso online non è ancora attivo in questa app:
+          i canti sono salvati solo su questo dispositivo.
+        </p>
+      </div>
+
+      <!-- Non si è dentro l'account: modulo di accesso -->
+      <div id="account-fuori" hidden>
+        <p class="nota-cestino">
+          Accedi per ritrovare <strong>i tuoi canti su tutti i tuoi dispositivi</strong>
+          (telefono, PC, tablet). L'accesso viene ricordato: lo fai una volta sola.
+          I canti restano comunque salvati anche qui, e funzionano senza internet.
+        </p>
+        <p id="account-messaggio" class="stato-pdf" hidden></p>
+        <form id="modulo-accesso" class="modulo">
+          <label>
+            Email
+            <input name="email" type="email" autocomplete="username" inputmode="email" required>
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" minlength="6" required>
+          </label>
+          <button type="submit" value="accedi" class="btn-grande">Accedi</button>
+          <div class="altre-azioni">
+            <button type="submit" value="registrati" class="btn-piccolo">Non hai un account? Creane uno</button>
+            <button type="button" id="btn-password-dimenticata" class="btn-link">Password dimenticata?</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Dentro l'account -->
+      <div id="account-dentro" hidden>
+        <div class="scheda-account">
+          <div class="icona-account" aria-hidden="true">☁&#xFE0E;</div>
+          <p>Accesso effettuato come<br><strong id="account-email"></strong></p>
+        </div>
+        <p id="stato-sync" class="stato-sync"></p>
+        <button id="btn-sincronizza" class="btn-grande">⟳ Sincronizza adesso</button>
+        <button id="btn-esci" class="btn-tratteggiato">Esci dall'account</button>
+      </div>
     </section>
   </main>
 
@@ -179,10 +240,16 @@
     <button data-sezione="prove" class="attivo"><b aria-hidden="true">♪</b><span>Canti prove</span></button>
     <button data-sezione="chiesa"><b aria-hidden="true">✝</b><span>Canti chiesa</span></button>
     <button data-sezione="cestino"><b aria-hidden="true">🗑&#xFE0E;</b><span>Cestino</span></button>
+    <button data-sezione="account">
+      <b aria-hidden="true">☁&#xFE0E;<i id="pallino-sync" class="pallino" hidden></i></b><span>Account</span>
+    </button>
   </nav>
 
   <script src="lib/pdf.min.js"></script>
+  <script src="lib/supabase.min.js"></script>
+  <script src="js/config.js"></script>
   <script src="js/db.js"></script>
+  <script src="js/sync.js"></script>
   <script src="js/pdf-import.js"></script>
   <script src="js/app.js"></script>
 </body>

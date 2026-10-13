@@ -10,18 +10,21 @@
 // Se aggiungi un NUOVO file all'app (es. un altro .js), aggiungilo a FILE_APP
 // e cambia il numero di VERSIONE.
 
-const VERSIONE = 'canti-v1';
+const VERSIONE = 'canti-v2';
 
 const FILE_APP = [
   './',
   'index.html',
   'manifest.webmanifest',
   'css/style.css',
+  'js/config.js',
   'js/db.js',
+  'js/sync.js',
   'js/pdf-import.js',
   'js/app.js',
   'lib/pdf.min.js',
   'lib/pdf.worker.min.js',
+  'lib/supabase.min.js',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',

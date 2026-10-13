@@ -29,6 +29,7 @@ const schermate = {
   modulo: $('schermata-modulo'),
   canto: $('schermata-canto'),
   cestino: $('schermata-cestino'),
+  account: $('schermata-account'),
 };
 
 // Chiede al browser di non cancellare mai i dati salvati (utile per gli audio,
@@ -54,10 +55,12 @@ function crea(tag, classe, testo) {
 
 // ---------- Finestrella per chiedere un nome ----------
 // Restituisce il nome scritto, oppure null se si preme "Annulla".
-function chiediNome(domanda, valoreIniziale = '') {
+// Con { password: true } quello che si scrive viene nascosto.
+function chiediNome(domanda, valoreIniziale = '', opzioni = {}) {
   const dialogo = $('dialogo-nome');
   const campo = $('dialogo-valore');
   $('dialogo-domanda').textContent = domanda;
+  campo.type = opzioni.password ? 'password' : 'text';
   campo.value = valoreIniziale;
   dialogo.showModal();
   campo.select();
@@ -245,6 +248,18 @@ function separaAccordiInLinea(riga) {
   return [accordi.trimEnd(), testo];
 }
 
+// Un PDF di spartito (pentagramma, chiavi, note) letto come testo dà "lettere a caso":
+// simboli musicali, lettere singole, parole senza vocali. Se la maggior parte delle
+// "parole" è così, probabilmente è uno spartito e va mostrato com'è.
+function sembraSpartito(testo) {
+  if (/[\uE000-\uF8FF]/.test(testo)) return true; // i caratteri dei font musicali moderni
+  const parole = testo.split(/\s+/).filter(Boolean);
+  if (parole.length === 0) return false;
+  const vere = parole.filter((p) =>
+    ACCORDO.test(p) || (/^[\p{L}'’,.;:!?«»"()\-]{2,}$/u.test(p) && /[aeiouàèéìòùy]/i.test(p)));
+  return vere.length / parole.length < 0.5;
+}
+
 // Prepara il testo: separa gli accordi in linea e dice se il canto ha accordi
 function analizzaTesto(testo) {
   const righe = testo.replace(/\r/g, '').split('\n').flatMap(separaAccordiInLinea);
@@ -293,6 +308,7 @@ function cambiaScala(passo) {
   scalaTesto = Math.min(SCALA_MAX, Math.max(SCALA_MIN, Math.round((scalaTesto + passo) * 10) / 10));
   try { localStorage.setItem('scalaTesto', scalaTesto); } catch (e) { /* va bene lo stesso */ }
   adattaLarghezza();
+  ridisegnaSpartiti();
 }
 $('btn-testo-meno').addEventListener('click', () => cambiaScala(-0.1));
 $('btn-testo-piu').addEventListener('click', () => cambiaScala(+0.1));
@@ -315,7 +331,9 @@ function adattaLarghezza() {
   $('btn-testo-piu').disabled = scalaTesto >= SCALA_MAX;
 }
 window.addEventListener('resize', () => {
-  if (!schermate.canto.hidden) adattaLarghezza();
+  if (schermate.canto.hidden) return;
+  adattaLarghezza();
+  ridisegnaSpartiti();
 });
 
 async function mostraCanto(id) {
@@ -359,25 +377,38 @@ $('btn-modifica-canto').addEventListener('click', () => mostraModulo(cantoCorren
 // Indirizzi temporanei dei file aperti: vanno liberati quando non servono più
 let indirizziFile = [];
 
+const ICONA_FILE = { audio: '🎵', pdf: '📄', spartito: '🎼' };
+
 async function mostraAllegati() {
   indirizziFile.forEach((u) => URL.revokeObjectURL(u));
   indirizziFile = [];
   allegatiCanto.innerHTML = '';
 
   for (const a of await Db.allegati(cantoCorrente)) {
-    const url = URL.createObjectURL(new Blob([a.dati], { type: a.mime }));
-    indirizziFile.push(url);
+    // Un file arrivato da un altro dispositivo può essere ancora in download
+    const url = a.dati ? URL.createObjectURL(new Blob([a.dati], { type: a.mime })) : null;
+    if (url) indirizziFile.push(url);
 
     const li = crea('li', 'allegato');
     const riga = crea('div', 'allegato-riga');
 
-    if (a.tipo === 'pdf') {
+    if (!url) {
+      riga.append(crea('span', 'allegato-nome', `${ICONA_FILE[a.tipo] || '📄'} ${a.nome} · ⏳ in arrivo…`));
+    } else if (a.tipo === 'pdf') {
       const link = crea('a', 'allegato-nome', '📄 ' + a.nome);
       link.href = url;
       link.target = '_blank';
       riga.append(link);
     } else {
-      riga.append(crea('span', 'allegato-nome', '🎵 ' + a.nome));
+      riga.append(crea('span', 'allegato-nome', `${ICONA_FILE[a.tipo] || '🎵'} ${a.nome}`));
+    }
+
+    // Un PDF allegato si può trasformare in spartito (per i canti caricati come testo per sbaglio)
+    if (a.tipo === 'pdf' && url) {
+      const comeSpartito = crea('button', 'btn-mini', '🎼');
+      comeSpartito.title = 'Mostra come spartito';
+      comeSpartito.addEventListener('click', () => trasformaInSpartito(a));
+      riga.append(comeSpartito);
     }
 
     const rinomina = crea('button', 'btn-mini', '✎');
@@ -400,7 +431,7 @@ async function mostraAllegati() {
     riga.append(rinomina, elimina);
     li.append(riga);
 
-    if (a.tipo === 'audio') {
+    if (a.tipo === 'audio' && url) {
       const lettore = crea('audio');
       lettore.controls = true;
       lettore.preload = 'metadata';
@@ -409,7 +440,105 @@ async function mostraAllegati() {
     }
     allegatiCanto.append(li);
   }
+  disegnaSpartiti();
 }
+
+// ---------- Spartiti ----------
+// Le pagine del PDF (o la foto) vengono disegnate a tutta larghezza, così come sono.
+// Con A− / A+ si rimpiccioliscono o ingrandiscono (e si scorrono di lato).
+
+const spartitiCanto = $('spartiti-canto');
+let disegnoInCorso = 0; // per fermare un disegno vecchio se nel frattempo si cambia canto
+
+async function disegnaSpartiti() {
+  const mio = ++disegnoInCorso;
+  const spartiti = cantoCorrente ? (await Db.allegati(cantoCorrente)).filter((a) => a.tipo === 'spartito') : [];
+  if (mio !== disegnoInCorso) return;
+  spartitiCanto.innerHTML = '';
+  spartitiCanto.style.setProperty('--scala', scalaTesto);
+
+  // (misuro la pagina del canto: il contenitore degli spartiti, finché è vuoto, è nascosto)
+  const larghezza = Math.floor(schermate.canto.clientWidth * scalaTesto);
+  const densita = Math.min(window.devicePixelRatio || 1, 3);
+
+  for (const a of spartiti) {
+    const blocco = crea('div', 'spartito');
+    spartitiCanto.append(blocco);
+    if (!a.dati) {
+      blocco.append(crea('p', 'dettaglio', `🎼 ${a.nome} · ⏳ in arrivo…`));
+      continue;
+    }
+
+    // Foto o immagine
+    if (a.mime && a.mime.startsWith('image/')) {
+      const url = URL.createObjectURL(new Blob([a.dati], { type: a.mime }));
+      indirizziFile.push(url);
+      const img = crea('img');
+      img.src = url;
+      img.alt = 'Spartito: ' + a.nome;
+      img.style.width = larghezza + 'px';
+      blocco.append(img);
+      continue;
+    }
+
+    // PDF: una pagina alla volta
+    try {
+      // pdf.js "consuma" i dati che riceve: gli passo una copia
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(a.dati.slice(0)) }).promise;
+      for (let n = 1; n <= pdf.numPages; n++) {
+        if (mio !== disegnoInCorso) return pdf.destroy();
+        const pagina = await pdf.getPage(n);
+        const base = pagina.getViewport({ scale: 1 });
+        const vista = pagina.getViewport({ scale: (larghezza / base.width) * densita });
+        const tela = crea('canvas');
+        tela.width = Math.floor(vista.width);
+        tela.height = Math.floor(vista.height);
+        tela.style.width = larghezza + 'px';
+        tela.setAttribute('aria-label', `Spartito: ${a.nome}, pagina ${n}`);
+        blocco.append(tela);
+        await pagina.render({ canvasContext: tela.getContext('2d'), viewport: vista }).promise;
+      }
+      pdf.destroy();
+    } catch (err) {
+      console.error(err);
+      blocco.append(crea('p', 'dettaglio', `Non è stato possibile mostrare lo spartito «${a.nome}».`));
+    }
+  }
+}
+
+// Dopo A− / A+ o un cambio di larghezza, ridisegno (aspettando un attimo)
+let timerSpartiti = null;
+function ridisegnaSpartiti() {
+  if (!spartitiCanto.querySelector('.spartito')) return;
+  clearTimeout(timerSpartiti);
+  timerSpartiti = setTimeout(disegnaSpartiti, 250);
+}
+
+// Un PDF allegato (caricato come testo) diventa uno spartito
+async function trasformaInSpartito(allegato) {
+  await Db.aggiornaAllegato(allegato.id, { tipo: 'spartito' });
+  const canto = await Db.canto(cantoCorrente);
+  if (canto.testo.trim() && sembraSpartito(canto.testo)) {
+    const scelta = await chiediScelta(
+      'Fatto! Ora lo spartito si vede con le note.\n\nIl testo letto dal PDF sembra fatto di lettere a caso: vuoi toglierlo?',
+      [{ valore: 'togli', testo: 'Sì, togli il testo sbagliato' }],
+      'No, lascialo'
+    );
+    if (scelta) await Db.aggiornaCanto(cantoCorrente, { testo: '' });
+  }
+  mostraCanto(cantoCorrente);
+}
+
+// Aggiunta di uno spartito dalla pagina del canto
+$('file-spartito-canto').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const nome = await chiediNome('Come vuoi chiamare questo spartito?', senzaEstensione(file.name));
+  if (!nome) return;
+  await Db.aggiungiAllegato(cantoCorrente, nome, 'spartito', file);
+  mostraAllegati();
+});
 
 // Aggiunta di audio dalla pagina del canto: per ogni file si chiede il nome
 $('file-audio-canto').addEventListener('change', async (e) => {
@@ -452,10 +581,11 @@ function descrizione(el) {
     return `Cartella in ${NOMI_SEZIONI[el.sezione]} · ${canti}`;
   }
   if (el.tipo === 'canto') return `Canto in ${NOMI_SEZIONI[el.sezione]}`;
-  return `${el.tipoFile === 'pdf' ? 'PDF' : 'Audio'} del canto «${el.canto}»`;
+  const tipo = { pdf: 'PDF', spartito: 'Spartito', audio: 'Audio' }[el.tipoFile] || 'File';
+  return `${tipo} del canto «${el.canto}»`;
 }
 
-const ICONE = { cartella: '📁', canto: '♪', audio: '🎵', pdf: '📄' };
+const ICONE = { cartella: '📁', canto: '♪', audio: '🎵', pdf: '📄', spartito: '🎼' };
 
 async function mostraCestino() {
   await Db.svuotaCestino(); // prima tolgo ciò che è scaduto
@@ -521,7 +651,7 @@ function mostraFileScelti() {
   fileScelti.forEach((f, i) => {
     const li = crea('li', 'allegato');
     const riga = crea('div', 'allegato-riga');
-    riga.append(crea('span', 'allegato-nome', (f.tipo === 'pdf' ? '📄 ' : '🎵 ') + f.nome));
+    riga.append(crea('span', 'allegato-nome', `${ICONA_FILE[f.tipo]} ${f.nome}`));
 
     const rinomina = crea('button', 'btn-mini', '✎');
     rinomina.type = 'button';
@@ -561,7 +691,7 @@ let idInModifica = null;
 
 // Senza id: modulo vuoto per un canto nuovo. Con id: modulo con i dati del canto da modificare.
 async function mostraModulo(id = null) {
-  idInModifica = typeof id === 'number' ? id : null;
+  idInModifica = typeof id === 'string' ? id : null;
   modulo.reset();
   filePdf.value = '';
   fileScelti = [];
@@ -627,11 +757,27 @@ filePdf.addEventListener('change', async () => {
 
   try {
     const testo = await leggiTestoPdf(file);
-    if (testo === '') {
-      scriviStatoPdf(
-        'Questo PDF non contiene testo leggibile (probabilmente è una foto o una scansione).',
-        true
+    if (testo !== '' && sembraSpartito(testo)) {
+      const scelta = await chiediScelta(
+        'Questo PDF sembra uno spartito con le note (pentagramma, chiavi…). ' +
+        'Letto come testo diventerebbe una serie di lettere a caso.\n\nCome vuoi caricarlo?',
+        [
+          { valore: 'spartito', testo: '🎼 Come spartito, con le note (consigliato)' },
+          { valore: 'testo', testo: '📄 Come testo lo stesso' },
+        ]
       );
+      if (scelta === 'spartito') return aggiungiSpartitoAlModulo(file);
+      if (!scelta) return scriviStatoPdf('Caricamento annullato.');
+    }
+    if (testo === '') {
+      // Una scansione o una foto: non c'è testo da leggere, ma si può mostrare così com'è
+      const scelta = await chiediScelta(
+        'In questo PDF non c\'è testo da leggere (probabilmente è una scansione o una foto).\n\n' +
+        'Vuoi mostrarlo così com\'è, come spartito?',
+        [{ valore: 'spartito', testo: '🎼 Sì, mostralo come spartito' }]
+      );
+      if (scelta) return aggiungiSpartitoAlModulo(file);
+      return scriviStatoPdf('Questo PDF non contiene testo leggibile.', true);
     } else {
       // Titolo: la prima riga che non è di accordi, altrimenti il nome del file
       const primaRiga = testo.split('\n').find((r) => r.trim() !== '' && !eRigaDiAccordi(r));
@@ -657,12 +803,28 @@ filePdf.addEventListener('change', async () => {
   }
 });
 
+// Spartito scelto nel modulo di un canto nuovo: viene salvato insieme al canto
+async function aggiungiSpartitoAlModulo(file) {
+  const nome = await chiediNome('Come vuoi chiamare questo spartito?', senzaEstensione(file.name));
+  if (!nome) return scriviStatoPdf('Caricamento annullato.');
+  fileScelti.push({ nome, tipo: 'spartito', file });
+  mostraFileScelti();
+  if (!modulo.titolo.value.trim()) modulo.titolo.value = nome;
+  scriviStatoPdf('🎼 Spartito pronto: verrà mostrato con le note, così com\'è. Controlla il titolo e tocca «Salva canto».');
+}
+
+$('file-spartito').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (file) aggiungiSpartitoAlModulo(file);
+});
+
 modulo.addEventListener('submit', async (e) => {
   e.preventDefault();
   const canto = {
     titolo: modulo.titolo.value.trim(),
     sezione: modulo.sezione.value,
-    cartella: modulo.cartella.value === '' ? null : Number(modulo.cartella.value),
+    cartella: modulo.cartella.value === '' ? null : modulo.cartella.value,
     testo: modulo.testo.value,
   };
   let id = idInModifica;
@@ -682,7 +844,7 @@ modulo.addEventListener('submit', async (e) => {
 });
 
 // ---------- Navigazione ----------
-// Colora la voce attiva nella barra in basso ("prove", "chiesa" o "cestino")
+// Colora la voce attiva nella barra in basso ("prove", "chiesa", "cestino" o "account")
 function evidenziaSezione(voce = sezioneCorrente) {
   document.querySelectorAll('.barra-bassa button').forEach((b) => {
     b.classList.toggle('attivo', b.dataset.sezione === voce);
@@ -692,6 +854,7 @@ function evidenziaSezione(voce = sezioneCorrente) {
 document.querySelectorAll('.barra-bassa button').forEach((b) => {
   b.addEventListener('click', () => {
     if (b.dataset.sezione === 'cestino') return mostraCestino();
+    if (b.dataset.sezione === 'account') return mostraAccount();
     sezioneCorrente = b.dataset.sezione;
     cartellaCorrente = null;
     evidenziaSezione();
@@ -739,6 +902,157 @@ btnTema.addEventListener('click', () => {
 });
 sistemaScuro.addEventListener('change', aggiornaPulsanteTema);
 aggiornaPulsanteTema();
+
+// ---------- Account e sincronizzazione ----------
+
+function mostraAccount() {
+  mostra('account', 'Account', false);
+  evidenziaSezione('account');
+  aggiornaAccount();
+}
+
+// Messaggio sopra il modulo di accesso (in rosso se è un errore)
+function messaggioAccount(testo, errore = false) {
+  const el = $('account-messaggio');
+  el.textContent = testo;
+  el.hidden = !testo;
+  el.classList.toggle('errore', errore);
+}
+
+function testoStatoSync() {
+  switch (Sync.stato) {
+    case 'inCorso':
+      return '⟳ Sto controllando e salvando i canti online…';
+    case 'offline':
+      return '📴 Sei senza internet. I canti sono salvati su questo dispositivo e verranno ' +
+        'salvati online appena torna la connessione.';
+    case 'errore':
+      return `⚠ Salvataggio online non riuscito: ${Sync.errore} I canti restano salvati qui e l'app riproverà da sola.`;
+    default: {
+      if (!Sync.ultimaVolta) return '✓ Collegato al tuo account.';
+      const ora = new Date(Sync.ultimaVolta).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+      return `✓ Tutto salvato online. Ultimo controllo alle ${ora}.`;
+    }
+  }
+}
+
+// Aggiorna la pagina Account e il pallino sull'icona in basso
+function aggiornaAccount() {
+  const dentro = !!Sync.utente;
+  $('account-spento').hidden = Sync.stato !== 'spento';
+  $('account-fuori').hidden = Sync.stato === 'spento' || dentro;
+  $('account-dentro').hidden = !dentro;
+  if (dentro) $('account-email').textContent = Sync.utente.email;
+  if (!dentro && Sync.errore) messaggioAccount(Sync.errore, true);
+
+  const stato = $('stato-sync');
+  stato.textContent = testoStatoSync();
+  stato.classList.toggle('errore', Sync.stato === 'errore');
+  $('btn-sincronizza').disabled = Sync.stato === 'inCorso';
+
+  const pallino = $('pallino-sync');
+  pallino.hidden = !dentro;
+  pallino.className = 'pallino ' + Sync.stato;
+}
+Sync.quandoCambiaStato(aggiornaAccount);
+
+// Quando arrivano canti da un altro dispositivo, aggiorno quello che si sta guardando
+Sync.quandoArrivanoDati(async () => {
+  if (!schermate.elenco.hidden) {
+    const y = window.scrollY;
+    await mostraElenco();
+    window.scrollTo(0, y);
+  } else if (!schermate.canto.hidden) {
+    const canto = cantoCorrente && (await Db.canto(cantoCorrente));
+    if (!canto || canto.eliminato) return mostraElenco();
+    titoloCanto.textContent = canto.titolo;
+    disegnaTesto(canto.testo);
+    // non interrompo un audio che sta suonando
+    const suona = [...allegatiCanto.querySelectorAll('audio')].some((a) => !a.paused);
+    if (!suona) mostraAllegati();
+  } else if (!schermate.cestino.hidden) {
+    mostraCestino();
+  }
+});
+
+// Accedi / Crea un account
+$('modulo-accesso').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const azione = (e.submitter && e.submitter.value) || 'accedi';
+  const email = form.email.value.trim();
+  const password = form.password.value;
+  const pulsanti = form.querySelectorAll('button');
+  pulsanti.forEach((b) => (b.disabled = true));
+  messaggioAccount('Un momento…');
+
+  try {
+    if (azione === 'registrati') {
+      const esito = await Sync.registrati(email, password);
+      if (esito === 'confermaEmail') {
+        messaggioAccount(`Ti abbiamo mandato un'email a ${email}. Apri il link che contiene per ` +
+          'attivare l\'account, poi torna qui e tocca «Accedi».');
+        return;
+      }
+      avviso('Account creato! Da ora i tuoi canti vengono salvati anche online.');
+    } else {
+      await Sync.accedi(email, password);
+      avviso('Accesso effettuato! I tuoi canti arrivano su questo dispositivo.');
+    }
+    form.reset();
+    messaggioAccount('');
+    aggiornaAccount();
+  } catch (err) {
+    messaggioAccount(err.message, true);
+  } finally {
+    pulsanti.forEach((b) => (b.disabled = false));
+  }
+});
+
+$('btn-password-dimenticata').addEventListener('click', async () => {
+  const email = $('modulo-accesso').email.value.trim();
+  if (!email) return messaggioAccount('Scrivi prima la tua email qui sotto, poi tocca di nuovo «Password dimenticata?».', true);
+  try {
+    await Sync.recuperaPassword(email);
+    messaggioAccount(`Ti abbiamo mandato un'email a ${email} con un link per scegliere una nuova password.`);
+  } catch (err) {
+    messaggioAccount(err.message, true);
+  }
+});
+
+// Aperta l'app dal link "nuova password" ricevuto per email
+Sync.quandoServeNuovaPassword(async () => {
+  $('pagina-iniziale').classList.add('chiusa');
+  const password = await chiediNome('Scegli una nuova password (almeno 6 caratteri)', '', { password: true });
+  if (!password) return;
+  try {
+    await Sync.cambiaPassword(password);
+    avviso('Password cambiata!');
+  } catch (err) {
+    avviso(err.message);
+  }
+});
+
+$('btn-sincronizza').addEventListener('click', () => Sync.sincronizza());
+
+$('btn-esci').addEventListener('click', async () => {
+  await Sync.sincronizza(); // prima provo a salvare online le ultime modifiche
+  const mancanti = await Db.quanteDaInviare();
+  const domanda = mancanti
+    ? (mancanti === 1
+      ? 'Attenzione: 1 modifica non è ancora stata salvata online (serve internet). Se esci adesso andrà persa.'
+      : `Attenzione: ${mancanti} modifiche non sono ancora state salvate online (serve internet). Se esci adesso andranno perse.`) +
+      '\n\nVuoi uscire lo stesso?'
+    : "Vuoi uscire dall'account?\n\nI tuoi canti restano salvati online. Da questo dispositivo " +
+      'verranno tolti, e torneranno quando accederai di nuovo.';
+  const scelta = await chiediScelta(domanda, [{ valore: 'esci', testo: "Esci dall'account", pericolo: true }]);
+  if (!scelta) return;
+  await Sync.esci();
+  sezioneCorrente = 'prove';
+  cartellaCorrente = null;
+  avviso("Uscita dall'account effettuata.");
+  aggiornaAccount();
+});
 
 // ---------- Pagina iniziale ----------
 // Toccando "Canta con noi" la pagina rossa sfuma e appare l'elenco dei canti
@@ -802,5 +1116,8 @@ btnInstalla.addEventListener('click', async () => {
 
 // Avvio: prima si cancella dal cestino ciò che ha più di 3 giorni,
 // e lo si ricontrolla ogni ora finché l'app resta aperta.
-Db.svuotaCestino().finally(mostraElenco);
+Db.svuotaCestino().finally(() => {
+  mostraElenco();
+  Sync.avvia(); // accesso ricordato e sincronizzazione con l'account online
+});
 setInterval(() => Db.svuotaCestino(), 60 * 60 * 1000);

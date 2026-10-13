@@ -936,3 +936,11 @@ a.allegato-nome { color: var(--titoli); font-weight: 700; }
   line-height: 1.4;
   white-space: pre;
 }
+
+/* I due moduli (Accedi / Crea un account) hanno la stessa impaginazione */
+.accesso-iniziale form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.accesso-iniziale input::placeholder { color: #9a8b78; font-size: 0.85rem; }

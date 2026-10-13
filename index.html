@@ -36,28 +36,55 @@
       <p id="iniziale-utente" class="iniziale-nota" hidden></p>
     </div>
 
-    <form id="modulo-accesso" class="accesso-iniziale" hidden>
-      <h1 class="titolo-iniziale">Canta con noi</h1>
-      <p class="iniziale-nota">
-        Accedi per ritrovare i tuoi canti su telefono e PC.
-        L'accesso viene ricordato: lo fai una volta sola.
-      </p>
+    <!-- Accesso e registrazione: due pagine, se ne vede una alla volta -->
+    <div id="blocco-accesso" class="accesso-iniziale" hidden>
+      <h1 id="titolo-accesso" class="titolo-iniziale">Accedi</h1>
+      <p id="sottotitolo-accesso" class="iniziale-nota"></p>
       <p id="account-messaggio" class="messaggio-iniziale" hidden></p>
-      <label>
-        Email
-        <input name="email" type="email" autocomplete="username" inputmode="email" required>
-      </label>
-      <label>
-        Password
-        <input name="password" type="password" autocomplete="current-password" minlength="6" required>
-      </label>
-      <button type="submit" value="accedi" class="btn-entra">Accedi</button>
-      <button type="submit" value="registrati" class="btn-installa">Crea un account</button>
+
+      <!-- Pagina "Accedi" -->
+      <form id="modulo-accesso">
+        <label>
+          Email
+          <input name="email" type="email" autocomplete="username" inputmode="email" required>
+        </label>
+        <label>
+          Password
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit" class="btn-entra">Accedi</button>
+        <button type="button" id="btn-vai-registrazione" class="btn-installa">Non hai un account? Crea un account</button>
+        <div class="link-iniziali">
+          <button type="button" id="btn-password-dimenticata" class="btn-link-chiaro">Password dimenticata?</button>
+        </div>
+      </form>
+
+      <!-- Pagina "Crea un account" -->
+      <form id="modulo-registrazione" hidden>
+        <label>
+          Il tuo nome
+          <input name="nome" autocomplete="name" required placeholder="Lo vedranno gli altri nei gruppi">
+        </label>
+        <label>
+          Email
+          <input name="email" type="email" autocomplete="email" inputmode="email" required>
+        </label>
+        <label>
+          Password (almeno 6 caratteri)
+          <input name="password" type="password" autocomplete="new-password" minlength="6" required>
+        </label>
+        <label>
+          Ripeti la password
+          <input name="ripeti" type="password" autocomplete="new-password" minlength="6" required>
+        </label>
+        <button type="submit" class="btn-entra">Crea l'account</button>
+        <button type="button" id="btn-torna-accesso" class="btn-installa">Hai già un account? Accedi</button>
+      </form>
+
       <div class="link-iniziali">
-        <button type="button" id="btn-password-dimenticata" class="btn-link-chiaro">Password dimenticata?</button>
         <button type="button" id="btn-senza-account" class="btn-link-chiaro">Continua senza account</button>
       </div>
-    </form>
+    </div>
 
     <!-- Compare solo se l'app si può installare e non è già installata -->
     <button id="btn-installa" class="btn-installa" hidden>⬇ Scarica l'app</button>

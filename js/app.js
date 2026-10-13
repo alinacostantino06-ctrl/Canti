@@ -989,40 +989,100 @@ Sync.quandoArrivanoDati(async () => {
   }
 });
 
-// Accedi / Crea un account
-$('modulo-accesso').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const form = e.target;
-  const azione = (e.submitter && e.submitter.value) || 'accedi';
-  const email = form.email.value.trim();
-  const password = form.password.value;
+// ---------- Accedi / Crea un account (sulla pagina iniziale) ----------
+
+// Mostra la pagina "Accedi" oppure "Crea un account"
+function mostraPaginaAccesso(quale) {
+  const registrazione = quale === 'registrazione';
+  $('modulo-accesso').hidden = registrazione;
+  $('modulo-registrazione').hidden = !registrazione;
+  $('titolo-accesso').textContent = registrazione ? 'Crea un account' : 'Accedi';
+  $('sottotitolo-accesso').textContent = registrazione
+    ? 'Con un account ritrovi i tuoi canti su telefono e PC, e puoi condividerli nei gruppi.'
+    : 'Accedi per ritrovare i tuoi canti su telefono e PC. L\'accesso viene ricordato: lo fai una volta sola.';
+  messaggioAccount('');
+  paginaIniziale.scrollTop = 0;
+}
+
+// Mentre si aspetta la risposta, i pulsanti del modulo non si possono toccare
+async function conPulsantiFermi(form, lavoro) {
   const pulsanti = form.querySelectorAll('button');
   pulsanti.forEach((b) => (b.disabled = true));
-  messaggioAccount('Un momento…');
-
   try {
-    if (azione === 'registrati') {
-      const esito = await Sync.registrati(email, password);
-      if (esito === 'confermaEmail') {
-        messaggioAccount(`Ti abbiamo mandato un'email a ${email}. Apri il link che contiene per ` +
-          'attivare l\'account, poi torna qui e tocca «Accedi».');
-        return;
-      }
-      avviso('Account creato! Da ora i tuoi canti vengono salvati anche online.');
-    } else {
-      await Sync.accedi(email, password);
-      avviso('Accesso effettuato! I tuoi canti arrivano su questo dispositivo.');
-    }
-    form.reset();
-    messaggioAccount('');
-    aggiornaAccount();
-    aggiornaIniziale();
-    chiudiIniziale();
-  } catch (err) {
-    messaggioAccount(err.message, true);
+    await lavoro();
   } finally {
     pulsanti.forEach((b) => (b.disabled = false));
   }
+}
+
+// Dopo l'accesso: si entra nei canti
+function entraDopoAccesso() {
+  messaggioAccount('');
+  aggiornaAccount();
+  aggiornaIniziale();
+  chiudiIniziale();
+}
+
+$('modulo-accesso').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const form = e.target;
+  conPulsantiFermi(form, async () => {
+    messaggioAccount('Un momento…');
+    try {
+      await Sync.accedi(form.email.value.trim(), form.password.value);
+      form.reset();
+      avviso('Accesso effettuato! I tuoi canti arrivano su questo dispositivo.');
+      entraDopoAccesso();
+    } catch (err) {
+      messaggioAccount(err.message, true);
+    }
+  });
+});
+
+$('modulo-registrazione').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const nome = form.nome.value.trim();
+  const email = form.email.value.trim();
+  if (form.password.value !== form.ripeti.value) {
+    messaggioAccount('Le due password non sono uguali: riscrivile.', true);
+    form.ripeti.value = '';
+    return form.ripeti.focus();
+  }
+  conPulsantiFermi(form, async () => {
+    messaggioAccount('Un momento…');
+    try {
+      const esito = await Sync.registrati(email, form.password.value);
+      await Gruppi.salvaMioNome(nome); // il nome che vedranno gli altri nei gruppi
+      form.reset();
+      if (esito === 'confermaEmail') {
+        // si torna alla pagina "Accedi", con l'email già scritta
+        mostraPaginaAccesso('accesso');
+        $('modulo-accesso').email.value = email;
+        messaggioAccount(`Account creato! Ti abbiamo mandato un'email a ${email}: apri il link che contiene ` +
+          'per attivarlo (guarda anche nella posta indesiderata), poi torna qui e tocca «Accedi».');
+        return;
+      }
+      avviso(`Ciao ${nome}! Account creato: i tuoi canti ora vengono salvati anche online.`);
+      entraDopoAccesso();
+    } catch (err) {
+      messaggioAccount(err.message, true);
+    }
+  });
+});
+
+$('btn-vai-registrazione').addEventListener('click', () => {
+  const email = $('modulo-accesso').email.value.trim();
+  mostraPaginaAccesso('registrazione');
+  if (email) $('modulo-registrazione').email.value = email;
+  $('modulo-registrazione').nome.focus();
+});
+
+$('btn-torna-accesso').addEventListener('click', () => {
+  const email = $('modulo-registrazione').email.value.trim();
+  mostraPaginaAccesso('accesso');
+  if (email) $('modulo-accesso').email.value = email;
+  $('modulo-accesso').email.focus();
 });
 
 $('btn-password-dimenticata').addEventListener('click', async () => {
@@ -1495,7 +1555,7 @@ const serveAccesso = () => Sync.stato !== 'spento' && !Sync.utente;
 function aggiornaIniziale() {
   const dentro = !!Sync.utente;
   if (!serveAccesso()) moduloAperto = false;
-  $('modulo-accesso').hidden = !moduloAperto;
+  $('blocco-accesso').hidden = !moduloAperto;
   $('iniziale-entra').hidden = moduloAperto;
   paginaIniziale.classList.toggle('con-accesso', moduloAperto);
   $('iniziale-utente').hidden = !dentro;
@@ -1509,6 +1569,7 @@ function chiudiIniziale() {
 // conModulo = true: si apre direttamente il modulo di accesso (es. da "Accedi" nella pagina Account)
 function apriIniziale(conModulo = false) {
   moduloAperto = conModulo === true && serveAccesso();
+  mostraPaginaAccesso('accesso');
   aggiornaIniziale();
   paginaIniziale.classList.remove('chiusa');
   paginaIniziale.scrollTop = 0;
@@ -1517,6 +1578,7 @@ function apriIniziale(conModulo = false) {
 $('btn-entra').addEventListener('click', () => {
   if (!serveAccesso()) return chiudiIniziale();
   moduloAperto = true;
+  mostraPaginaAccesso('accesso');
   aggiornaIniziale();
   $('modulo-accesso').email.focus();
 });

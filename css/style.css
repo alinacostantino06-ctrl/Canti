@@ -1136,3 +1136,31 @@ a.allegato-nome { color: var(--titoli); font-weight: 700; }
    si può solo scorrere. Nella pagina del canto lo zoom con due dita lo fa l'app,
    solo sul PDF / testo. */
 html { touch-action: pan-x pan-y; }
+
+/* ---------- Icone disegnate (uguali su telefono, iPhone e computer) ---------- */
+/* Prima erano simboli del carattere (🗑 ✉ ☁): ogni telefono li disegnava a modo suo,
+   spesso come emoji colorate. Ora sono disegni a linee che prendono il colore del testo. */
+.icona {
+  width: 1.45rem;
+  height: 1.45rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: middle;
+}
+.barra-bassa b { display: inline-flex; line-height: 1; }
+.icona-account .icona { width: 1.7rem; height: 1.7rem; }
+/* Busta davanti al nome dei gruppi */
+.elenco .voce-gruppo::before {
+  content: "";
+  flex: none;
+  width: 1.2em;
+  height: 1.2em;
+  background: currentColor;
+  color: var(--oro);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='4' width='20' height='16' rx='2'/%3E%3Cpolyline points='22,6 12,13 2,6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='4' width='20' height='16' rx='2'/%3E%3Cpolyline points='22,6 12,13 2,6'/%3E%3C/svg%3E") center / contain no-repeat;
+  align-self: center;
+}

@@ -43,6 +43,14 @@ const CAMPI = {
 // Messaggi d'errore comprensibili
 function spiegaErrore(err) {
   const m = String((err && (err.message || err.error_description || err.error)) || err || '');
+  const soluzioneEmail = ' Si risolve in Supabase: Authentication → Sign In / Providers → Email → ' +
+    'disattiva «Confirm email» e salva.';
+  if (/not authorized|email_address_not_authorized/i.test(m))
+    return 'Supabase non può mandare l’email di conferma a questo indirizzo.' + soluzioneEmail;
+  if (/error sending|sending .*email|confirmation email/i.test(m))
+    return 'Supabase non è riuscito a mandare l’email di conferma.' + soluzioneEmail;
+  if (/email rate limit|over_email_send_rate_limit/i.test(m))
+    return 'Supabase ha già mandato troppe email in quest’ora.' + soluzioneEmail;
   if (/invalid login credentials/i.test(m)) return 'Email o password sbagliate.';
   if (/email not confirmed/i.test(m)) return "Devi prima confermare l'email: apri il link che ti abbiamo mandato.";
   if (/already registered|already been registered|user already exists/i.test(m))

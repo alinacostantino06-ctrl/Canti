@@ -25,10 +25,40 @@
 </head>
 <body>
 
-  <!-- Pagina iniziale: copre tutto finché non si tocca "Canta con noi" -->
+  <!-- Pagina iniziale: copre tutto finché non si entra.
+       - se non si è dentro l'account: modulo di accesso
+       - se l'accesso è già salvato (o l'accesso online non è attivo): pulsante "Canta con noi" -->
   <section id="pagina-iniziale" class="pagina-iniziale">
     <div class="croce-grande" aria-hidden="true">✠</div>
-    <button id="btn-entra" class="btn-entra">Canta con noi</button>
+
+    <div id="iniziale-entra" class="iniziale-blocco" hidden>
+      <button id="btn-entra" class="btn-entra">Canta con noi</button>
+      <p id="iniziale-utente" class="iniziale-nota" hidden></p>
+    </div>
+
+    <form id="modulo-accesso" class="accesso-iniziale" hidden>
+      <h1 class="titolo-iniziale">Canta con noi</h1>
+      <p class="iniziale-nota">
+        Accedi per ritrovare i tuoi canti su telefono e PC.
+        L'accesso viene ricordato: lo fai una volta sola.
+      </p>
+      <p id="account-messaggio" class="messaggio-iniziale" hidden></p>
+      <label>
+        Email
+        <input name="email" type="email" autocomplete="username" inputmode="email" required>
+      </label>
+      <label>
+        Password
+        <input name="password" type="password" autocomplete="current-password" minlength="6" required>
+      </label>
+      <button type="submit" value="accedi" class="btn-entra">Accedi</button>
+      <button type="submit" value="registrati" class="btn-installa">Crea un account</button>
+      <div class="link-iniziali">
+        <button type="button" id="btn-password-dimenticata" class="btn-link-chiaro">Password dimenticata?</button>
+        <button type="button" id="btn-senza-account" class="btn-link-chiaro">Continua senza account</button>
+      </div>
+    </form>
+
     <!-- Compare solo se l'app si può installare e non è già installata -->
     <button id="btn-installa" class="btn-installa" hidden>⬇ Scarica l'app</button>
   </section>
@@ -175,29 +205,15 @@
         </p>
       </div>
 
-      <!-- Non si è dentro l'account: modulo di accesso -->
+      <!-- Non si è dentro l'account: il modulo di accesso è nella pagina iniziale -->
       <div id="account-fuori" hidden>
         <p class="nota-cestino">
           Accedi per ritrovare <strong>i tuoi canti su tutti i tuoi dispositivi</strong>
           (telefono, PC, tablet). L'accesso viene ricordato: lo fai una volta sola.
           I canti restano comunque salvati anche qui, e funzionano senza internet.
         </p>
-        <p id="account-messaggio" class="stato-pdf" hidden></p>
-        <form id="modulo-accesso" class="modulo">
-          <label>
-            Email
-            <input name="email" type="email" autocomplete="username" inputmode="email" required>
-          </label>
-          <label>
-            Password
-            <input name="password" type="password" autocomplete="current-password" minlength="6" required>
-          </label>
-          <button type="submit" value="accedi" class="btn-grande">Accedi</button>
-          <div class="altre-azioni">
-            <button type="submit" value="registrati" class="btn-piccolo">Non hai un account? Creane uno</button>
-            <button type="button" id="btn-password-dimenticata" class="btn-link">Password dimenticata?</button>
-          </div>
-        </form>
+        <p id="account-avviso" class="stato-sync errore" hidden></p>
+        <button id="btn-vai-accesso" class="btn-grande">Accedi o crea un account</button>
       </div>
 
       <!-- Dentro l'account -->

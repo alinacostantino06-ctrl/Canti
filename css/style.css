@@ -704,3 +704,101 @@ a.allegato-nome { color: var(--titoli); font-weight: 700; }
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
 }
 .spartito .dettaglio { color: var(--tenue); font-style: italic; }
+
+/* ---------- Accesso sulla pagina iniziale ---------- */
+/* La pagina si può scorrere (sul telefono la tastiera ne copre una parte):
+   i margini automatici la tengono centrata quando c'è spazio */
+.pagina-iniziale {
+  justify-content: flex-start;
+  overflow-y: auto;
+}
+.pagina-iniziale::before,
+.pagina-iniziale::after {
+  content: "";
+  margin: auto; /* due "molle" invisibili sopra e sotto */
+}
+.pagina-iniziale.con-accesso { gap: 1.2rem; }
+.pagina-iniziale.con-accesso .croce-grande { font-size: min(22vw, 6rem); }
+
+.iniziale-blocco {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+}
+.iniziale-nota {
+  margin: 0;
+  color: #e9d9b4;
+  font-size: 0.85rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.accesso-iniziale {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  width: min(100%, 22rem);
+}
+.titolo-iniziale {
+  margin: 0;
+  color: #f7f1e3;
+  font-size: 1.6rem;
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+.accesso-iniziale label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: #d9b45e;
+  font-size: 0.8rem;
+  font-variant: small-caps;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.accesso-iniziale input {
+  padding: 0.75rem 0.9rem;
+  border: 1.5px solid rgba(217, 180, 94, 0.7);
+  border-radius: 8px;
+  background: #fffaf0;
+  color: #2b2118;
+  font: inherit;
+  font-size: 1rem;
+  font-variant: normal;
+  font-weight: normal;
+  letter-spacing: normal;
+}
+.accesso-iniziale input:focus { outline: 3px solid rgba(217, 180, 94, 0.5); outline-offset: 1px; }
+.accesso-iniziale .btn-entra { margin-top: 0.4rem; }
+.accesso-iniziale .btn-installa { margin-top: 0; }
+.accesso-iniziale button:disabled { opacity: 0.6; }
+
+.messaggio-iniziale {
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: 8px;
+  background: rgba(255, 250, 240, 0.95);
+  color: #2b2118;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.messaggio-iniziale.errore { border-left: 4px solid #e0533f; }
+
+.link-iniziali {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem 1.2rem;
+}
+.btn-link-chiaro {
+  border: 0;
+  background: none;
+  color: #e9d9b4;
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+#account-fuori .btn-grande { margin-top: 0.4rem; }

@@ -943,7 +943,8 @@ function aggiornaAccount() {
   $('account-fuori').hidden = Sync.stato === 'spento' || dentro;
   $('account-dentro').hidden = !dentro;
   if (dentro) $('account-email').textContent = Sync.utente.email;
-  if (!dentro && Sync.errore) messaggioAccount(Sync.errore, true);
+  $('account-avviso').textContent = Sync.errore;
+  $('account-avviso').hidden = dentro || !Sync.errore;
 
   const stato = $('stato-sync');
   stato.textContent = testoStatoSync();
@@ -954,7 +955,10 @@ function aggiornaAccount() {
   pallino.hidden = !dentro;
   pallino.className = 'pallino ' + Sync.stato;
 }
-Sync.quandoCambiaStato(aggiornaAccount);
+Sync.quandoCambiaStato(() => {
+  aggiornaAccount();
+  aggiornaIniziale();
+});
 
 // Quando arrivano canti da un altro dispositivo, aggiorno quello che si sta guardando
 Sync.quandoArrivanoDati(async () => {
@@ -1002,6 +1006,8 @@ $('modulo-accesso').addEventListener('submit', async (e) => {
     form.reset();
     messaggioAccount('');
     aggiornaAccount();
+    aggiornaIniziale();
+    chiudiIniziale();
   } catch (err) {
     messaggioAccount(err.message, true);
   } finally {
@@ -1011,7 +1017,7 @@ $('modulo-accesso').addEventListener('submit', async (e) => {
 
 $('btn-password-dimenticata').addEventListener('click', async () => {
   const email = $('modulo-accesso').email.value.trim();
-  if (!email) return messaggioAccount('Scrivi prima la tua email qui sotto, poi tocca di nuovo «Password dimenticata?».', true);
+  if (!email) return messaggioAccount('Scrivi prima la tua email, poi tocca di nuovo «Password dimenticata?».', true);
   try {
     await Sync.recuperaPassword(email);
     messaggioAccount(`Ti abbiamo mandato un'email a ${email} con un link per scegliere una nuova password.`);
@@ -1052,12 +1058,42 @@ $('btn-esci').addEventListener('click', async () => {
   cartellaCorrente = null;
   avviso("Uscita dall'account effettuata.");
   aggiornaAccount();
+  mostraElenco();
+  apriIniziale();
 });
 
+$('btn-vai-accesso').addEventListener('click', apriIniziale);
+
 // ---------- Pagina iniziale ----------
-// Toccando "Canta con noi" la pagina rossa sfuma e appare l'elenco dei canti
-$('btn-entra').addEventListener('click', () => {
-  $('pagina-iniziale').classList.add('chiusa');
+// Se l'accesso è già salvato (o l'accesso online non è attivo) c'è "Canta con noi";
+// altrimenti c'è il modulo per accedere o creare un account.
+const paginaIniziale = $('pagina-iniziale');
+
+function aggiornaIniziale() {
+  const dentro = !!Sync.utente;
+  const conModulo = Sync.stato !== 'spento' && !dentro;
+  $('modulo-accesso').hidden = !conModulo;
+  $('iniziale-entra').hidden = conModulo;
+  paginaIniziale.classList.toggle('con-accesso', conModulo);
+  $('iniziale-utente').hidden = !dentro;
+  if (dentro) $('iniziale-utente').textContent = '✓ Accesso salvato: ' + Sync.utente.email;
+}
+
+function chiudiIniziale() {
+  paginaIniziale.classList.add('chiusa');
+}
+
+function apriIniziale() {
+  aggiornaIniziale();
+  paginaIniziale.classList.remove('chiusa');
+  paginaIniziale.scrollTop = 0;
+}
+
+// Toccando "Canta con noi" (o "Continua senza account") la pagina rossa sfuma e appare l'elenco
+$('btn-entra').addEventListener('click', chiudiIniziale);
+$('btn-senza-account').addEventListener('click', () => {
+  messaggioAccount('');
+  chiudiIniziale();
 });
 
 // ---------- Funzionamento offline e installazione ----------
@@ -1118,6 +1154,7 @@ btnInstalla.addEventListener('click', async () => {
 // e lo si ricontrolla ogni ora finché l'app resta aperta.
 Db.svuotaCestino().finally(() => {
   mostraElenco();
-  Sync.avvia(); // accesso ricordato e sincronizzazione con l'account online
+  // accesso ricordato e sincronizzazione con l'account online
+  Sync.avvia().catch((err) => console.warn(err)).finally(aggiornaIniziale);
 });
 setInterval(() => Db.svuotaCestino(), 60 * 60 * 1000);

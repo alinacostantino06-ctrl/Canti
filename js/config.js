@@ -17,4 +17,6 @@
 const CONFIG_CLOUD = {
   url: 'https://mbbdvitpphlpdmxlsznz.supabase.co',
   chiave: 'sb_publishable_MXIczEe4oOgHfvoyjLTDnw_H5hYr2Z8',
+  // Chiave PUBBLICA per le notifiche (quella segreta sta solo nei Secrets di Supabase)
+  vapidPubblica: 'BLTexGv4wa5yHTfJUYQzgAwb56fNKA_m2s0Sd3JelZ3Z80I30GRfmKqvCZAdMJ0A4EePyt8sok_tLXPPOReyzl8',
 };

@@ -967,6 +967,8 @@ function aggiornaAccount() {
   stato.classList.toggle('errore', Sync.stato === 'errore');
   $('btn-sincronizza').disabled = Sync.stato === 'inCorso';
 
+  aggiornaNotificheUI();
+
   const pallino = $('pallino-sync');
   pallino.hidden = !dentro;
   pallino.className = 'pallino ' + Sync.stato;
@@ -1129,6 +1131,7 @@ $('btn-esci').addEventListener('click', async () => {
       'verranno tolti, e torneranno quando accederai di nuovo.';
   const scelta = await chiediScelta(domanda, [{ valore: 'esci', testo: "Esci dall'account", pericolo: true }]);
   if (!scelta) return;
+  await Notifiche.disattiva().catch(() => {});
   await Sync.esci();
   sezioneCorrente = 'canti';
   cartellaCorrente = null;
@@ -1172,6 +1175,7 @@ $('btn-elimina-account').addEventListener('click', async () => {
   const password = await chiediNome('Per sicurezza, scrivi la tua password', '', { password: true });
   if (!password) return;
   avviso('Eliminazione in corso…');
+  await Notifiche.disattiva().catch(() => {});
   try {
     await Sync.eliminaAccount(password);
     sezioneCorrente = 'canti';
@@ -1235,6 +1239,7 @@ async function mostraGruppi() {
 
   nota.hidden = true;
   contenuto.hidden = false;
+  aggiornaNotificheUI();
   const lista = $('elenco-gruppi');
   try {
     const gruppi = await Gruppi.miei();
@@ -1323,11 +1328,12 @@ async function apriChat(g) {
   $('chat-codice').textContent = g.codice;
   $('elenco-chat').innerHTML = '';
   $('chat-vuota').hidden = true;
-  $('elenco-avvisi').hidden = true;
   $('coro-stato').hidden = true;
   $('schede-coro').hidden = true;
   scegliScheda('chat');
   await preparaCoro(g);
+  if (Gruppi.coroAttivo(g)) scegliScheda(schedaRichiesta || 'bacheca');
+  schedaRichiesta = null;
   await caricaChat(true);
   // messaggi nuovi "in diretta"; e comunque ricontrollo ogni 20 secondi
   try { smettiDiAscoltare = Gruppi.ascolta(g.id, () => caricaChat()); } catch (e) { /* va bene lo stesso */ }
@@ -1337,6 +1343,7 @@ async function apriChat(g) {
 async function caricaChat(vaiInFondo = false) {
   const g = gruppoCorrente;
   if (!g || schermate.chat.hidden) return;
+  if (!$('pannello-bacheca').hidden) mostraBacheca();
   const mio = ++caricamentoChat;
   const nota = $('chat-avviso');
   try {
@@ -1788,7 +1795,6 @@ async function preparaCoro(g) {
   const direttore = Gruppi.sonoDirettore(g);
 
   $('schede-coro').hidden = !coro;
-  $('btn-nuovo-avviso').hidden = !(coro && direttore);
   if (!coro) scegliScheda('chat');
 
   const stato = $('coro-stato');
@@ -1818,57 +1824,97 @@ async function preparaCoro(g) {
     }
     stato.hidden = false;
   }
-  await mostraAvvisi(g);
 }
 
-// ---- Avvisi ----
-async function mostraAvvisi(g) {
-  const ul = $('elenco-avvisi');
-  ul.innerHTML = '';
-  const lista = Gruppi.coroAttivo(g) ? await Gruppi.avvisi(g.id) : [];
+// ---- Bacheca: avvisi del direttore, come in un'app di messaggi ----
+async function mostraBacheca(vaiInFondo = false) {
+  const g = gruppoCorrente;
+  if (!g) return;
   const direttore = Gruppi.sonoDirettore(g);
-  for (const a of lista.slice(0, 3)) {
-    const li = crea('li', 'avviso-coro');
-    const testa = crea('div', 'autore', '📣 ' + a.autore + ' · ' +
-      new Date(a.creato).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }));
+  $('scrivi-avviso').hidden = !direttore;
+  $('bacheca-solo-direttori').hidden = direttore;
+
+  const lista = await Gruppi.avvisi(g.id);
+  if (gruppoCorrente !== g || $('pannello-bacheca').hidden) return;
+  const eraInFondo = vaiInFondo || window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+
+  const ul = $('elenco-bacheca');
+  ul.innerHTML = '';
+  let giornoPrecedente = '';
+  for (const a of lista) {
+    const quando = new Date(a.creato);
+    const giorno = quando.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+    if (giorno !== giornoPrecedente) {
+      ul.append(crea('li', 'giorno-chat', giorno));
+      giornoPrecedente = giorno;
+    }
+    const mio = a.user_id === Sync.utente.id;
+    const li = crea('li', 'messaggio avviso-bacheca' + (mio ? ' mio' : ''));
+    const testa = crea('div', 'autore', '📣 ' + (mio ? 'Tu' : a.autore) + ' · ' + formatoOra(quando));
     if (direttore) {
       const togli = crea('button', 'btn-mini', '🗑');
-      togli.title = 'Togli avviso';
+      togli.title = 'Togli dalla bacheca';
       togli.addEventListener('click', async () => {
+        const scelta = await chiediScelta('Togliere questo avviso dalla bacheca?', [{ valore: 'si', testo: 'Togli', pericolo: true }]);
+        if (!scelta) return;
         try {
           await Gruppi.eliminaAvviso(a.id);
-          mostraAvvisi(g);
+          mostraBacheca();
         } catch (err) {
           avviso('⚠ ' + err.message);
         }
       });
       testa.append(togli);
     }
-    li.append(testa, crea('p', '', a.testo));
+    li.append(testa, crea('p', 'testo-messaggio', a.testo));
     ul.append(li);
   }
-  ul.hidden = !lista.length;
+  $('bacheca-vuota').hidden = lista.length > 0;
+  if (eraInFondo) window.scrollTo(0, document.body.scrollHeight);
+  if (lista.length) {
+    await Gruppi.segnaVisto(g.id, lista[lista.length - 1].creato);
+    aggiornaNovita(true);
+  }
 }
 
-$('btn-nuovo-avviso').addEventListener('click', async () => {
-  const g = gruppoCorrente;
-  const testo = await chiediNome('Avviso per tutto il coro (es. «Prove spostate a giovedì alle 21»)');
+// La casella per scrivere si allunga mentre si scrive (fino a 6 righe circa)
+const testoAvviso = $('testo-avviso');
+function adattaCasellaAvviso() {
+  testoAvviso.style.height = 'auto';
+  testoAvviso.style.height = Math.min(testoAvviso.scrollHeight, 160) + 'px';
+}
+testoAvviso.addEventListener('input', adattaCasellaAvviso);
+// Sul computer: Ctrl+Invio invia
+testoAvviso.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('scrivi-avviso').requestSubmit();
+});
+
+$('scrivi-avviso').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const testo = testoAvviso.value.trim();
   if (!testo) return;
+  const invia = e.target.querySelector('button');
+  invia.disabled = true;
   try {
-    await Gruppi.pubblicaAvviso(g.id, testo);
-    avviso('Avviso pubblicato.');
-    mostraAvvisi(g);
+    await Gruppi.pubblicaAvviso(gruppoCorrente.id, testo);
+    testoAvviso.value = '';
+    adattaCasellaAvviso();
+    await mostraBacheca(true);
   } catch (err) {
     avviso('⚠ ' + err.message);
+  } finally {
+    invia.disabled = false;
   }
 });
 
 // ---- Schede del gruppo Coro ----
 function scegliScheda(nome) {
   document.querySelectorAll('#schede-coro button').forEach((b) => b.classList.toggle('attiva', b.dataset.scheda === nome));
+  $('pannello-bacheca').hidden = nome !== 'bacheca';
   $('pannello-chat').hidden = nome !== 'chat';
   $('pannello-libretto').hidden = nome !== 'libretto';
   $('pannello-scalette').hidden = nome !== 'scalette';
+  if (nome === 'bacheca') mostraBacheca(true);
   if (nome === 'libretto') mostraLibretto();
   if (nome === 'scalette') mostraScalette();
 }
@@ -2252,6 +2298,66 @@ $('btn-senza-account').addEventListener('click', () => {
   chiudiIniziale();
 });
 
+// ---------- Notifiche: attivarle e aprire il gruppo giusto quando se ne tocca una ----------
+
+async function aggiornaNotificheUI() {
+  const stato = await Notifiche.stato().catch(() => 'non supportate');
+  const testi = {
+    attive: '🔔 Notifiche attive su questo dispositivo.',
+    spente: '🔕 Notifiche spente su questo dispositivo.',
+    bloccate: '🔕 Le notifiche sono bloccate nelle impostazioni del telefono (o del browser).',
+    'non supportate': '🔕 ' + Notifiche.perchéNo(),
+  };
+  $('stato-notifiche').textContent = testi[stato];
+  const pulsante = $('btn-notifiche');
+  pulsante.hidden = !Sync.utente || stato === 'non supportate' || stato === 'bloccate';
+  pulsante.textContent = stato === 'attive' ? 'Disattiva' : 'Attiva le notifiche';
+  $('invito-notifiche').hidden = !(Sync.utente && stato === 'spente');
+}
+
+async function attivaNotifiche() {
+  try {
+    await Notifiche.attiva();
+    avviso('🔔 Notifiche attive: ti avviseremo quando arrivano avvisi, canti e scalette.');
+  } catch (err) {
+    await chiediScelta(err.message, [], 'Ho capito');
+  }
+  aggiornaNotificheUI();
+}
+
+$('btn-notifiche').addEventListener('click', async () => {
+  if ((await Notifiche.stato()) === 'attive') {
+    await Notifiche.disattiva().catch((err) => avviso('⚠ ' + err.message));
+    avviso('🔕 Notifiche spente su questo dispositivo.');
+    aggiornaNotificheUI();
+  } else {
+    attivaNotifiche();
+  }
+});
+$('btn-attiva-notifiche-gruppi').addEventListener('click', attivaNotifiche);
+
+// Apre un gruppo (nella scheda indicata) quando si tocca una sua notifica
+let schedaRichiesta = null;
+async function apriGruppoDaNotifica(gruppoId, scheda) {
+  paginaIniziale.classList.add('senza-animazione', 'chiusa');
+  if (!Gruppi.disponibili()) return mostraElenco();
+  try {
+    const g = (await Gruppi.miei()).find((x) => x.id === gruppoId);
+    if (!g) return mostraGruppi();
+    schedaRichiesta = scheda || 'bacheca';
+    await apriChat(g);
+  } catch (err) {
+    mostraGruppi();
+  }
+}
+
+// Se l'app è già aperta, il service worker ci manda un messaggio
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data && e.data.tipo === 'apri-gruppo' && e.data.gruppo) apriGruppoDaNotifica(e.data.gruppo, e.data.scheda);
+  });
+}
+
 // ---------- Tasto "indietro" del telefono ----------
 // Nella cronologia c'è sempre una "pagina" in più: quando si preme indietro il telefono la
 // toglie e noi, invece di uscire dall'app, torniamo alla schermata precedente e la rimettiamo.
@@ -2447,6 +2553,13 @@ Db.svuotaCestino().finally(async () => {
   // accesso ricordato e sincronizzazione con l'account online
   await Sync.avvia().catch((err) => console.warn(err));
   aggiornaIniziale();
+  // aperta toccando una notifica: si va dritti al gruppo
+  const daNotifica = new URLSearchParams(location.search);
+  if (daNotifica.get('gruppo')) {
+    history.replaceState(history.state, '', location.pathname);
+    await apriGruppoDaNotifica(daNotifica.get('gruppo'), daNotifica.get('scheda'));
+    return;
+  }
   // se l'app era aperta da poco si riparte da dove si era, altrimenti dall'elenco dei canti
   const ripresa = await riprendiPosizione().catch((err) => {
     console.warn(err);

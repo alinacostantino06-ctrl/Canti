@@ -10,7 +10,7 @@
 // Se aggiungi un NUOVO file all'app (es. un altro .js), aggiungilo a FILE_APP
 // e cambia il numero di VERSIONE.
 
-const VERSIONE = 'canti-v9';
+const VERSIONE = 'canti-v10';
 
 const FILE_APP = [
   './',
@@ -23,6 +23,7 @@ const FILE_APP = [
   'js/db.js',
   'js/sync.js',
   'js/gruppi.js',
+  'js/notifiche.js',
   'js/app.js',
   'lib/pdf.min.js',
   'lib/pdf.worker.min.js',
@@ -31,6 +32,7 @@ const FILE_APP = [
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',
   'icons/favicon-32.png',
+  'icons/badge-96.png',
 ];
 
 // Installazione: scarico e salvo tutti i file dell'app
@@ -89,3 +91,43 @@ function conLimiteDiTempo(promessa, millisecondi) {
     );
   });
 }
+
+// ---------- Notifiche ----------
+// Arrivano da Supabase (Edge Function "notifica") anche quando l'app è chiusa.
+self.addEventListener('push', (evento) => {
+  let dati = {};
+  try {
+    dati = evento.data ? evento.data.json() : {};
+  } catch (e) {
+    dati = { testo: evento.data ? evento.data.text() : '' };
+  }
+  evento.waitUntil(self.registration.showNotification(dati.titolo || 'Canta con noi', {
+    body: dati.testo || '',
+    icon: 'icons/icon-192.png',
+    badge: 'icons/badge-96.png', // icona piccola nella barra di Android (solo bianca)
+    tag: dati.gruppo ? 'gruppo-' + dati.gruppo + '-' + (dati.scheda || '') : undefined,
+    renotify: !!dati.gruppo,
+    data: { gruppo: dati.gruppo || null, scheda: dati.scheda || 'bacheca' },
+  }));
+});
+
+// Toccando la notifica si apre l'app direttamente sul gruppo (nella scheda giusta)
+self.addEventListener('notificationclick', (evento) => {
+  evento.notification.close();
+  const { gruppo, scheda } = evento.notification.data || {};
+  const indirizzo = new URL('./', self.registration.scope);
+  if (gruppo) {
+    indirizzo.searchParams.set('gruppo', gruppo);
+    indirizzo.searchParams.set('scheda', scheda || 'bacheca');
+  }
+  evento.waitUntil((async () => {
+    const finestre = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const finestra of finestre) {
+      if ('focus' in finestra) {
+        finestra.postMessage({ tipo: 'apri-gruppo', gruppo, scheda });
+        return finestra.focus();
+      }
+    }
+    return self.clients.openWindow(indirizzo.href);
+  })());
+});

@@ -137,16 +137,17 @@ const Gruppi = {
   impostaRuolo: (gruppoId, persona, ruolo) =>
     conMessaggio(Sync.client.rpc('imposta_ruolo', { gruppo: gruppoId, persona, nuovo_ruolo: ruolo })),
 
-  // ---- Avvisi del direttore ----
+  // ---- Bacheca: avvisi del direttore (gli ultimi 100, dal più vecchio al più nuovo) ----
   async avvisi(gruppoId) {
     const { data, error } = await Sync.client.from('avvisi').select('*')
-      .eq('gruppo_id', gruppoId).order('creato', { ascending: false }).limit(5);
-    return error ? [] : data;
+      .eq('gruppo_id', gruppoId).order('creato', { ascending: false }).limit(100);
+    return error ? [] : data.reverse();
   },
   async pubblicaAvviso(gruppoId, testo) {
     await conMessaggio(Sync.client.from('avvisi').insert({
       gruppo_id: gruppoId, user_id: Sync.utente.id, autore: (await this.mioNome()) || 'Il direttore', testo,
     }));
+    Notifiche.invia(gruppoId, 'avviso', testo);
   },
   eliminaAvviso: (id) => conMessaggio(Sync.client.from('avvisi').delete().eq('id', id)),
 
@@ -192,6 +193,7 @@ const Gruppi = {
       if (allegati.length) await Sync.client.storage.from(BUCKET_CONDIVISI).remove(allegati.map((f) => f.percorso));
       throw err;
     }
+    Notifiche.invia(gruppoId, 'libretto', canto.titolo);
   },
 
   // Rimette nel libretto la versione attuale del canto del direttore da cui viene
@@ -222,7 +224,10 @@ const Gruppi = {
   async salvaScaletta(gruppoId, scaletta) {
     const riga = { gruppo_id: gruppoId, titolo: scaletta.titolo, data: scaletta.data || null, voci: scaletta.voci };
     if (scaletta.id) await conMessaggio(Sync.client.from('scalette').update(riga).eq('id', scaletta.id));
-    else await conMessaggio(Sync.client.from('scalette').insert({ id: nuovoId(), ...riga, creato_da: Sync.utente.id }));
+    else {
+      await conMessaggio(Sync.client.from('scalette').insert({ id: nuovoId(), ...riga, creato_da: Sync.utente.id }));
+      Notifiche.invia(gruppoId, 'scaletta', scaletta.titolo);
+    }
   },
   eliminaScaletta: (id) => conMessaggio(Sync.client.from('scalette').delete().eq('id', id)),
 
@@ -313,6 +318,7 @@ const Gruppi = {
         messaggio: messaggio || '', titolo: canto.titolo, sezione: canto.sezione,
         testo: canto.testo || '', allegati: caricati,
       }));
+      Notifiche.invia(gruppoId, 'canto', canto.titolo + (messaggio ? ' — ' + messaggio : ''));
     } catch (err) {
       // se non è andata, tolgo i file già caricati
       if (caricati.length) await Sync.client.storage.from(BUCKET_CONDIVISI).remove(caricati.map((f) => f.percorso));
@@ -358,12 +364,18 @@ const Gruppi = {
     const canale = Sync.client.channel('gruppo-' + gruppoId)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'condivisioni', filter: `gruppo_id=eq.${gruppoId}` },
         () => quandoCambia())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'avvisi', filter: `gruppo_id=eq.${gruppoId}` },
+        () => quandoCambia())
       .subscribe();
     return () => Sync.client.removeChannel(canale);
   },
 
   // Quando ho guardato per l'ultima volta la chat di un gruppo
-  segnaVisto: (gruppoId, quando) => Db.salvaImpostazione('visto:' + gruppoId, quando),
+  // (chat e bacheca lo aggiornano entrambe: tengo sempre il momento più recente)
+  async segnaVisto(gruppoId, quando) {
+    const prima = await Db.impostazione('visto:' + gruppoId);
+    if (!prima || new Date(quando) > new Date(prima)) await Db.salvaImpostazione('visto:' + gruppoId, quando);
+  },
 
   // Quanti canti nuovi (mandati da altri e non ancora visti) ci sono in ogni gruppo
   async novita(gruppi) {

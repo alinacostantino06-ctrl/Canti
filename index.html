@@ -100,7 +100,8 @@
     // si era: la pagina iniziale non si mostra nemmeno per un attimo.
     try {
       var posizione = JSON.parse(localStorage.getItem('posizione'));
-      if (posizione && posizione.dentro && Date.now() - posizione.quando < 8 * 3600 * 1000) {
+      if ((posizione && posizione.dentro && Date.now() - posizione.quando < 8 * 3600 * 1000) ||
+          /[?&]gruppo=/.test(location.search)) {
         document.getElementById('pagina-iniziale').classList.add('senza-animazione', 'chiusa');
       }
     } catch (e) {}
@@ -243,6 +244,10 @@
           e <strong>salvare quelli degli altri</strong> nelle tue cartelle.
           Per entrare in un gruppo serve il suo codice.
         </p>
+        <div id="invito-notifiche" class="coro-stato" hidden>
+          <p>🔔 Attiva le notifiche per sapere subito quando arrivano avvisi, canti e scalette.</p>
+          <button id="btn-attiva-notifiche-gruppi" class="btn-grande">Attiva le notifiche</button>
+        </div>
         <ul id="elenco-gruppi" class="elenco"></ul>
         <p id="gruppi-vuoto" class="vuoto" hidden>Non sei ancora in nessun gruppo.</p>
         <button id="btn-crea-gruppo" class="btn-grande">＋ Crea un gruppo</button>
@@ -262,15 +267,23 @@
       <!-- Versione Coro: stato (per il direttore) e prova gratuita -->
       <div id="coro-stato" class="coro-stato" hidden></div>
 
-      <!-- Avvisi del direttore, in evidenza -->
-      <ul id="elenco-avvisi" class="avvisi" hidden></ul>
-      <button id="btn-nuovo-avviso" class="btn-piccolo" hidden>📣 Scrivi un avviso al coro</button>
-
       <!-- Schede (solo nei gruppi Coro) -->
       <div id="schede-coro" class="schede" role="tablist" hidden>
-        <button data-scheda="chat" class="attiva">💬 Chat</button>
-        <button data-scheda="libretto">📖 Libretto</button>
+        <button data-scheda="bacheca">📣 Bacheca</button>
         <button data-scheda="scalette">📅 Scalette</button>
+        <button data-scheda="libretto">📖 Libretto</button>
+        <button data-scheda="chat" class="attiva">♪ Condivisi</button>
+      </div>
+
+      <!-- Bacheca: gli avvisi del direttore, come in una chat (solo i direttori scrivono) -->
+      <div id="pannello-bacheca" hidden>
+        <ul id="elenco-bacheca" class="chat bacheca"></ul>
+        <p id="bacheca-vuota" class="vuoto" hidden>Nessun avviso in bacheca.</p>
+        <p id="bacheca-solo-direttori" class="nota-libretto" hidden>In bacheca scrivono solo i direttori del coro.</p>
+        <form id="scrivi-avviso" class="scrivi-avviso" hidden>
+          <textarea id="testo-avviso" rows="1" placeholder="Scrivi un avviso al coro…" aria-label="Avviso per il coro"></textarea>
+          <button type="submit" class="btn-invia" aria-label="Invia">➤</button>
+        </form>
       </div>
 
       <div id="pannello-chat">
@@ -344,6 +357,10 @@
         <p id="stato-sync" class="stato-sync"></p>
         <button id="btn-sincronizza" class="btn-grande">⟳ Sincronizza adesso</button>
         <button id="btn-esci" class="btn-tratteggiato">Esci dall'account</button>
+        <div class="scheda-notifiche">
+          <p id="stato-notifiche">🔔 Notifiche</p>
+          <button id="btn-notifiche" class="btn-piccolo"></button>
+        </div>
         <button id="btn-bloccati" class="btn-piccolo">🚫 Persone bloccate</button>
 
         <div class="zona-pericolo">
@@ -412,6 +429,7 @@
   <script src="js/db.js"></script>
   <script src="js/sync.js"></script>
   <script src="js/gruppi.js"></script>
+  <script src="js/notifiche.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

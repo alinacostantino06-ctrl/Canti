@@ -1119,3 +1119,15 @@ a.allegato-nome { color: var(--titoli); font-weight: 700; }
   font-size: 0.85rem;
   cursor: pointer;
 }
+
+/* Riaprendo l'app da dove si era, la pagina iniziale sparisce subito (senza dissolvenza) */
+.pagina-iniziale.senza-animazione { transition: none; }
+
+/* Nel modulo i pulsanti "Carica PDF" e "Carica audio" non sono titoli di campo */
+.modulo label.btn-pdf {
+  display: inline-block;
+  margin: 0;
+  font-variant: normal;
+  letter-spacing: normal;
+}
+#campo-allegati .stato-pdf { margin: 0.5rem 0 0.6rem; text-align: center; }

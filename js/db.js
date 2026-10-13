@@ -167,7 +167,8 @@ async function modificaLocale(archivi, fn) {
 // Segna un record come appena modificato qui (da inviare online)
 const segnato = (record) => ({ ...record, modificato: Date.now(), daInviare: 1 });
 
-const perNome = (campo) => (a, b) => a[campo].localeCompare(b[campo], 'it');
+// Ordine alfabetico "umano": senza badare a maiuscole/accenti, e "Canto 2" prima di "Canto 10"
+const perNome = (campo) => (a, b) => a[campo].localeCompare(b[campo], 'it', { numeric: true, sensitivity: 'base' });
 const attivi = (lista) => lista.filter((x) => !x.eliminato);
 
 // Legge un record, ci applica "cambia" e lo riscrive (segnandolo come modificato)
@@ -214,10 +215,10 @@ const Db = {
 
   // ---------- Canti ----------
 
-  // Canti di una sezione che stanno in una certa cartella (null = fuori dalle cartelle)
-  async canti(sezione, cartella = null) {
-    const tutti = await operazione('canti', 'readonly', (tx) =>
-      tx.objectStore('canti').index('sezione').getAll(sezione));
+  // Canti che stanno in una certa cartella (null = fuori dalle cartelle).
+  // (Una volta c'erano due sezioni, "prove" e "chiesa": ora è un elenco unico.)
+  async canti(cartella = null) {
+    const tutti = await operazione('canti', 'readonly', (tx) => tx.objectStore('canti').getAll());
     return attivi(tutti).filter((c) => (c.cartella ?? null) === cartella).sort(perNome('titolo'));
   },
 
@@ -245,15 +246,15 @@ const Db = {
 
   // ---------- Cartelle ----------
 
-  async cartelle(sezione) {
-    const tutte = await operazione('cartelle', 'readonly', (tx) =>
-      tx.objectStore('cartelle').index('sezione').getAll(sezione));
+  // Tutte le cartelle, in ordine alfabetico
+  async cartelle() {
+    const tutte = await operazione('cartelle', 'readonly', (tx) => tx.objectStore('cartelle').getAll());
     return attivi(tutte).sort(perNome('nome'));
   },
 
   cartella: (id) => operazione('cartelle', 'readonly', (tx) => tx.objectStore('cartelle').get(id)),
 
-  async aggiungiCartella(nome, sezione) {
+  async aggiungiCartella(nome, sezione = 'canti') {
     const id = nuovoId();
     await modificaLocale('cartelle', (tx) => tx.objectStore('cartelle').add(segnato({ id, nome, sezione })));
     return id;
@@ -513,14 +514,17 @@ const Db = {
     return [...new Set(cartelle.filter((c) => c.libretto).map((c) => c.libretto.gruppo))];
   },
 
+  // La cartella 📖 del libretto di un coro (una sola per coro)
+  idCartellaLibretto: (gruppoId) => 'libretto:' + gruppoId,
+
   // gruppo: { id, nome }; voce: riga del libretto; files: [{ id, nome, tipo, mime, dati }]
   salvaCantoLibretto: (gruppo, voce, files) =>
     operazione(['canti', 'cartelle', 'allegati'], 'readwrite', (tx) => {
-      const idCartella = 'libretto:' + gruppo.id + ':' + voce.sezione;
-      tx.objectStore('cartelle').put({ id: idCartella, nome: '📖 ' + gruppo.nome, sezione: voce.sezione,
+      const idCartella = Db.idCartellaLibretto(gruppo.id);
+      tx.objectStore('cartelle').put({ id: idCartella, nome: '📖 ' + gruppo.nome, sezione: 'canti',
         libretto: { gruppo: gruppo.id }, modificato: Date.now() });
       tx.objectStore('canti').put({
-        id: voce.id, titolo: voce.titolo, sezione: voce.sezione, cartella: idCartella, testo: voce.testo,
+        id: voce.id, titolo: voce.titolo, sezione: 'canti', cartella: idCartella, testo: voce.testo,
         creato: Date.parse(voce.aggiornato) || Date.now(), modificato: Date.now(),
         libretto: { gruppo: gruppo.id, nomeGruppo: gruppo.nome, aggiornato: voce.aggiornato },
       });
@@ -533,6 +537,18 @@ const Db = {
         }
       };
     }),
+
+  // Le vecchie cartelle del libretto (una per sezione) non servono più: ora è una sola
+  async togliCartelleLibrettoVecchie(gruppoId) {
+    let tolte = 0;
+    await operazione('cartelle', 'readwrite', (tx) => {
+      const s = tx.objectStore('cartelle');
+      s.getAll().onsuccess = (e) => e.target.result
+        .filter((c) => c.libretto && c.libretto.gruppo === gruppoId && c.id !== Db.idCartellaLibretto(gruppoId))
+        .forEach((c) => { s.delete(c.id); tolte++; });
+    });
+    return tolte > 0;
+  },
 
   togliCantoLibretto: (id) =>
     operazione(['canti', 'allegati'], 'readwrite', (tx) => {

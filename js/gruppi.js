@@ -257,7 +257,8 @@ const Gruppi = {
       const locali = new Map((await Db.librettoInCache(g.id)).map((c) => [c.id, c]));
       for (const voce of remoti) {
         const locale = locali.get(voce.id);
-        if (locale && locale.libretto.aggiornato === voce.aggiornato && locale.libretto.nomeGruppo === g.nome) continue;
+        if (locale && locale.libretto.aggiornato === voce.aggiornato && locale.libretto.nomeGruppo === g.nome &&
+            locale.cartella === Db.idCartellaLibretto(g.id)) continue;
         avanzamento('Scarico il libretto: «' + voce.titolo + '»…');
         const files = [];
         for (const f of voce.allegati || []) {
@@ -274,6 +275,7 @@ const Gruppi = {
           cambiato = true;
         }
       }
+      if (await Db.togliCartelleLibrettoVecchie(g.id)) cambiato = true;
       await Db.salvaImpostazione('scalette:' + g.id, await this.scalette(g.id));
     }
     return cambiato;

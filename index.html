@@ -93,12 +93,22 @@
     <!-- Compare solo se l'app si può installare e non è già installata -->
     <button id="btn-installa" class="btn-installa" hidden>⬇ Scarica l'app</button>
   </section>
+  <script>
+    // Se l'app era aperta da poco (es. messa in sottofondo e riaperta), si riparte da dove
+    // si era: la pagina iniziale non si mostra nemmeno per un attimo.
+    try {
+      var posizione = JSON.parse(localStorage.getItem('posizione'));
+      if (posizione && posizione.dentro && Date.now() - posizione.quando < 8 * 3600 * 1000) {
+        document.getElementById('pagina-iniziale').classList.add('senza-animazione', 'chiusa');
+      }
+    } catch (e) {}
+  </script>
 
   <!-- Intestazione: titolo della sezione + pulsanti di azione -->
   <header class="barra-alta">
     <button id="btn-indietro" class="btn-icona" hidden aria-label="Indietro">‹</button>
     <span class="croce" aria-hidden="true">✠</span>
-    <h1 id="titolo">Canti prove</h1>
+    <h1 id="titolo">Canti</h1>
     <button id="btn-tema" class="btn-icona" aria-label="Cambia tema chiaro/scuro"></button>
     <button id="btn-aggiungi" class="btn-icona" aria-label="Aggiungi canto">+</button>
   </header>
@@ -126,59 +136,41 @@
       <button id="btn-nuova-cartella" class="btn-tratteggiato">📁 Nuova cartella</button>
     </section>
 
-    <!-- Schermata 2: modulo per aggiungere un canto (a mano o da PDF) -->
+    <!-- Schermata 2: modulo per aggiungere (o modificare) un canto: titolo, cartella, PDF e audio -->
     <section id="schermata-modulo" hidden>
-      <div id="blocco-importa">
-      <div class="importa">
-        <div class="pulsanti-importa">
-          <label class="btn-pdf">
-            📄 Testo da PDF
-            <input id="file-pdf" type="file" accept="application/pdf,.pdf" hidden>
-          </label>
-          <label class="btn-pdf">
-            🎼 Carica spartito
-            <input id="file-spartito" type="file" accept="application/pdf,.pdf,image/*" hidden>
-          </label>
-        </div>
-        <p id="stato-pdf" class="stato-pdf">
-          «Testo da PDF» legge parole e accordi. «Carica spartito» mostra le note
-          così come sono (PDF o foto).
-        </p>
-      </div>
-
-      <div class="separatore"><span>oppure scrivilo a mano</span></div>
-      </div>
-
       <form id="modulo" class="modulo">
         <label>
           Titolo
-          <input name="titolo" required autocomplete="off">
-        </label>
-        <label>
-          Sezione
-          <select name="sezione">
-            <option value="prove">Canti prove</option>
-            <option value="chiesa">Canti chiesa</option>
-          </select>
+          <input name="titolo" required autocomplete="off" placeholder="Si riempie da solo con il nome del PDF">
         </label>
         <label>
           Cartella
           <select name="cartella"></select>
         </label>
-        <label>
-          Testo con accordi
-          <textarea name="testo" rows="14" spellcheck="false"
-            placeholder="Scrivi gli accordi sulla riga sopra il testo, ad esempio:&#10;&#10;DO        SOL&#10;Alleluia, alleluia&#10;&#10;Oppure scrivi solo il testo, senza accordi."></textarea>
-        </label>
-        <p id="info-accordi" class="info-accordi"></p>
+
         <div id="campo-allegati" class="campo">
-          <span class="etichetta">Audio, PDF e spartiti allegati</span>
+          <span class="etichetta">PDF e audio del canto</span>
+          <div class="pulsanti-importa">
+            <label class="btn-pdf">
+              📄 Carica PDF o foto
+              <input id="file-spartito" type="file" accept="application/pdf,.pdf,image/*" multiple hidden>
+            </label>
+            <label class="btn-pdf">
+              🎵 Carica audio
+              <input id="file-audio-modulo" type="file" accept="audio/*" multiple hidden>
+            </label>
+          </div>
+          <p id="stato-pdf" class="stato-pdf">I PDF (o le foto) si vedranno nel canto così come sono.</p>
           <ul id="file-in-attesa" class="allegati"></ul>
-          <label class="btn-piccolo">
-            🎵 Aggiungi audio
-            <input id="file-audio-modulo" type="file" accept="audio/*" multiple hidden>
-          </label>
         </div>
+
+        <!-- Solo per i canti che hanno già un testo scritto (versioni precedenti dell'app) -->
+        <label id="campo-testo" hidden>
+          Testo
+          <textarea name="testo" rows="10" spellcheck="false"></textarea>
+        </label>
+        <p id="info-accordi" class="info-accordi" hidden></p>
+
         <button id="btn-salva" type="submit" class="btn-grande">Salva canto</button>
       </form>
     </section>
@@ -196,7 +188,7 @@
           <input id="file-audio-canto" type="file" accept="audio/*" multiple hidden>
         </label>
         <label id="etichetta-spartito-canto" class="btn-piccolo">
-          🎼 Aggiungi spartito
+          📄 Aggiungi PDF o foto
           <input id="file-spartito-canto" type="file" accept="application/pdf,.pdf,image/*" hidden>
         </label>
         <!-- Grandezza del testo -->
@@ -402,8 +394,7 @@
 
   <!-- Barra di navigazione in basso -->
   <nav class="barra-bassa">
-    <button data-sezione="prove" class="attivo"><b aria-hidden="true">♪</b><span>Canti prove</span></button>
-    <button data-sezione="chiesa"><b aria-hidden="true">✝</b><span>Canti chiesa</span></button>
+    <button data-sezione="canti" class="attivo"><b aria-hidden="true">♪</b><span>Canti</span></button>
     <button data-sezione="gruppi">
       <b aria-hidden="true">✉&#xFE0E;<i id="pallino-gruppi" class="pallino nuovo" hidden></i></b><span>Gruppi</span>
     </button>
@@ -419,7 +410,6 @@
   <script src="js/db.js"></script>
   <script src="js/sync.js"></script>
   <script src="js/gruppi.js"></script>
-  <script src="js/pdf-import.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

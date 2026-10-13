@@ -1,9 +1,10 @@
 // Logica dell'interfaccia: sezioni, cartelle, canti e file allegati.
 
-const NOMI_SEZIONI = { prove: 'Canti prove', chiesa: 'Canti chiesa' };
+// Una volta c'erano due sezioni ("Canti prove" e "Canti chiesa"): ora è un elenco unico
+const NOME_ELENCO = 'Canti';
 
 // Stato dell'app: dove ci troviamo
-let sezioneCorrente = 'prove';
+let sezioneCorrente = 'canti'; // voce attiva nella barra in basso
 let cartellaCorrente = null; // id della cartella aperta, null = fuori dalle cartelle
 let cantoCorrente = null;    // id del canto aperto
 
@@ -21,7 +22,6 @@ const modulo = $('modulo');
 const testoCanto = $('testo-canto');
 const titoloCanto = $('titolo-canto');
 const allegatiCanto = $('allegati-canto');
-const filePdf = $('file-pdf');
 const statoPdf = $('stato-pdf');
 const fileInAttesa = $('file-in-attesa');
 const schermate = {
@@ -48,7 +48,11 @@ function mostra(nome, titoloBarra, conIndietro) {
   btnIndietro.hidden = !conIndietro;
   btnAggiungi.hidden = nome !== 'elenco';
   window.scrollTo(0, 0);
+  ricordaPosizione(nome);
 }
+
+// La schermata che si sta guardando adesso
+const schermataAttuale = () => Object.keys(schermate).find((k) => !schermate[k].hidden) || 'elenco';
 
 // Crea un elemento con classe e testo, per scrivere meno codice
 function crea(tag, classe, testo) {
@@ -142,13 +146,13 @@ async function mostraElenco() {
   const cartella = cartellaCorrente !== null ? await Db.cartella(cartellaCorrente) : null;
   if (cartellaCorrente !== null && !cartella) cartellaCorrente = null; // cartella eliminata
 
-  mostra('elenco', cartella ? cartella.nome : NOMI_SEZIONI[sezioneCorrente], !!cartella);
+  mostra('elenco', cartella ? cartella.nome : NOME_ELENCO, !!cartella);
   comandiCartella.hidden = !cartella || !!cartella.libretto;
   btnNuovaCartella.hidden = !!cartella;
   await mostraInfoLibretto(cartella);
 
   // Le cartelle si vedono solo nella "radice" della sezione
-  const cartelle = cartella ? [] : await Db.cartelle(sezioneCorrente);
+  const cartelle = cartella ? [] : await Db.cartelle();
   elencoCartelle.innerHTML = '';
   for (const c of cartelle) {
     const btn = crea('button', 'voce-cartella', c.nome);
@@ -161,7 +165,7 @@ async function mostraElenco() {
     elencoCartelle.append(li);
   }
 
-  const canti = await Db.canti(sezioneCorrente, cartellaCorrente);
+  const canti = await Db.canti(cartellaCorrente);
   elenco.innerHTML = '';
   let letteraPrecedente = '';
   for (const canto of canti) {
@@ -169,7 +173,7 @@ async function mostraElenco() {
     // Se il titolo non comincia con una lettera (es. "...Qual fiore", "1. Santo")
     // al posto del simbolo si mostra il nome della sezione.
     const iniziale = canto.titolo.trim().charAt(0).toUpperCase();
-    const lettera = /\p{L}/u.test(iniziale) ? iniziale : NOMI_SEZIONI[sezioneCorrente];
+    const lettera = /\p{L}/u.test(iniziale) ? iniziale : NOME_ELENCO;
     if (lettera !== letteraPrecedente) {
       elenco.append(crea('li', 'lettera', lettera));
       letteraPrecedente = lettera;
@@ -187,7 +191,7 @@ async function mostraElenco() {
 btnNuovaCartella.addEventListener('click', async () => {
   const nome = await chiediNome('Nome della nuova cartella');
   if (!nome) return;
-  await Db.aggiungiCartella(nome, sezioneCorrente);
+  await Db.aggiungiCartella(nome);
   mostraElenco();
 });
 
@@ -351,7 +355,7 @@ async function mostraCanto(id) {
   }
   cantoCorrente = id;
   const cartella = canto.cartella !== null ? await Db.cartella(canto.cartella) : null;
-  mostra('canto', cartella ? cartella.nome : NOMI_SEZIONI[canto.sezione], true);
+  mostra('canto', cartella ? cartella.nome : NOME_ELENCO, true);
   titoloCanto.textContent = canto.titolo;
 
   // I canti del libretto di un coro si leggono soltanto: li cura il direttore
@@ -369,24 +373,16 @@ async function mostraCanto(id) {
 // ---------- Sposta canto ----------
 $('btn-sposta-canto').addEventListener('click', async () => {
   const canto = await Db.canto(cantoCorrente);
-  // Tutte le destinazioni possibili: ogni sezione (fuori dalle cartelle) e ogni sua cartella
-  const opzioni = [];
-  for (const sezione of Object.keys(NOMI_SEZIONI)) {
-    opzioni.push({ valore: { sezione, cartella: null }, testo: `${NOMI_SEZIONI[sezione]} (fuori dalle cartelle)` });
-    for (const c of (await Db.cartelle(sezione)).filter((x) => !x.libretto)) {
-      opzioni.push({ valore: { sezione, cartella: c.id }, testo: `${NOMI_SEZIONI[sezione]} › 📁 ${c.nome}` });
-    }
+  const opzioni = [{ valore: { cartella: null }, testo: 'Fuori dalle cartelle' }];
+  for (const c of (await Db.cartelle()).filter((x) => !x.libretto)) {
+    opzioni.push({ valore: { cartella: c.id }, testo: '📁 ' + c.nome });
   }
   // tolgo il posto in cui il canto si trova già
-  const altrove = opzioni.filter((o) =>
-    !(o.valore.sezione === canto.sezione && o.valore.cartella === (canto.cartella ?? null)));
-
-  const dove = await chiediScelta(`Dove vuoi spostare «${canto.titolo}»?`, altrove);
+  const altrove = opzioni.filter((o) => o.valore.cartella !== (canto.cartella ?? null));
+  const dove = await chiediScelta('Dove vuoi spostare «' + canto.titolo + '»?', altrove);
   if (!dove) return;
   await Db.aggiornaCanto(cantoCorrente, dove);
-  sezioneCorrente = dove.sezione;
   cartellaCorrente = dove.cartella;
-  evidenziaSezione();
   mostraCanto(cantoCorrente);
   avviso('Canto spostato.');
 });
@@ -400,7 +396,7 @@ $('btn-modifica-canto').addEventListener('click', () => mostraModulo(cantoCorren
 // Indirizzi temporanei dei file aperti: vanno liberati quando non servono più
 let indirizziFile = [];
 
-const ICONA_FILE = { audio: '🎵', pdf: '📄', spartito: '🎼' };
+const ICONA_FILE = { audio: '🎵', pdf: '📄', spartito: '📄' };
 
 async function mostraAllegati() {
   indirizziFile.forEach((u) => URL.revokeObjectURL(u));
@@ -430,14 +426,6 @@ async function mostraAllegati() {
       riga.append(link);
     } else {
       riga.append(crea('span', 'allegato-nome', `${ICONA_FILE[a.tipo] || '🎵'} ${a.nome}` + (laMiaVoce(a) ? ' · 🎤 la tua voce' : '')));
-    }
-
-    // Un PDF allegato si può trasformare in spartito (per i canti caricati come testo per sbaglio)
-    if (a.tipo === 'pdf' && url && !delLibretto) {
-      const comeSpartito = crea('button', 'btn-mini', '🎼');
-      comeSpartito.title = 'Mostra come spartito';
-      comeSpartito.addEventListener('click', () => trasformaInSpartito(a));
-      riga.append(comeSpartito);
     }
 
     const rinomina = crea('button', 'btn-mini', '✎');
@@ -481,7 +469,7 @@ let disegnoInCorso = 0; // per fermare un disegno vecchio se nel frattempo si ca
 
 async function disegnaSpartiti() {
   const mio = ++disegnoInCorso;
-  const spartiti = cantoCorrente ? (await Db.allegati(cantoCorrente)).filter((a) => a.tipo === 'spartito') : [];
+  const spartiti = cantoCorrente ? (await Db.allegati(cantoCorrente)).filter((a) => a.tipo === 'spartito' || a.tipo === 'pdf') : [];
   if (mio !== disegnoInCorso) return;
   spartitiCanto.innerHTML = '';
   spartitiCanto.style.setProperty('--scala', scalaTesto);
@@ -563,7 +551,7 @@ $('file-spartito-canto').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
-  const nome = await chiediNome('Come vuoi chiamare questo spartito?', senzaEstensione(file.name));
+  const nome = await chiediNome('Come vuoi chiamare questo PDF?', senzaEstensione(file.name));
   if (!nome) return;
   await Db.aggiungiAllegato(cantoCorrente, nome, 'spartito', file);
   mostraAllegati();
@@ -607,9 +595,9 @@ function tempoRimasto(eliminato) {
 function descrizione(el) {
   if (el.tipo === 'cartella') {
     const canti = el.quantiCanti === 1 ? '1 canto' : `${el.quantiCanti} canti`;
-    return `Cartella in ${NOMI_SEZIONI[el.sezione]} · ${canti}`;
+    return `Cartella · ${canti}`;
   }
-  if (el.tipo === 'canto') return `Canto in ${NOMI_SEZIONI[el.sezione]}`;
+  if (el.tipo === 'canto') return 'Canto';
   const tipo = { pdf: 'PDF', spartito: 'Spartito', audio: 'Audio' }[el.tipoFile] || 'File';
   return `${tipo} del canto «${el.canto}»`;
 }
@@ -705,12 +693,12 @@ function mostraFileScelti() {
   });
 }
 
-// Riempie la tendina "Cartella" con le cartelle della sezione scelta
+// Riempie la tendina "Cartella" con tutte le cartelle (in ordine alfabetico)
 async function aggiornaTendinaCartelle(selezionata = null) {
   const tendina = modulo.cartella;
   tendina.innerHTML = '';
   tendina.append(new Option('— Nessuna cartella —', ''));
-  for (const c of (await Db.cartelle(modulo.sezione.value)).filter((x) => !x.libretto)) {
+  for (const c of (await Db.cartelle()).filter((x) => !x.libretto)) {
     tendina.append(new Option(c.nome, c.id, false, c.id === selezionata));
   }
 }
@@ -722,36 +710,33 @@ let idInModifica = null;
 async function mostraModulo(id = null) {
   idInModifica = typeof id === 'string' ? id : null;
   modulo.reset();
-  filePdf.value = '';
   fileScelti = [];
   mostraFileScelti();
-  scriviStatoPdf('Il testo verrà letto in automatico: controllalo e poi salva.');
+  scriviStatoPdf('I PDF (o le foto) si vedranno nel canto così come sono.');
 
-  // Importazione PDF e allegati solo per i canti nuovi:
-  // per quelli esistenti i file si gestiscono dalla pagina del canto
-  $('blocco-importa').hidden = idInModifica !== null;
+  // PDF e audio si caricano qui per i canti nuovi; per quelli esistenti dalla pagina del canto
   $('campo-allegati').hidden = idInModifica !== null;
   $('btn-salva').textContent = idInModifica !== null ? 'Salva modifiche' : 'Salva canto';
 
+  // Il campo del testo si vede solo per i canti che ne hanno già uno (versioni precedenti)
+  let conTesto = false;
   if (idInModifica !== null) {
     const canto = await Db.canto(idInModifica);
     modulo.titolo.value = canto.titolo;
-    modulo.sezione.value = canto.sezione;
-    modulo.testo.value = canto.testo;
+    modulo.testo.value = canto.testo || '';
+    conTesto = !!(canto.testo || '').trim();
     await aggiornaTendinaCartelle(canto.cartella);
     mostra('modulo', 'Modifica canto', true);
   } else {
-    modulo.sezione.value = sezioneCorrente;
     await aggiornaTendinaCartelle(cartellaCorrente);
     mostra('modulo', 'Nuovo canto', true);
-    modulo.titolo.focus();
   }
+  $('campo-testo').hidden = !conTesto;
+  $('info-accordi').hidden = !conTesto;
   aggiornaInfoAccordi();
 }
 
-modulo.sezione.addEventListener('change', () => aggiornaTendinaCartelle());
-
-// Mentre si scrive, l'app dice se ha trovato accordi o no
+// Mentre si modifica un testo, l'app dice se ha trovato accordi o no
 function aggiornaInfoAccordi() {
   const testo = modulo.testo.value;
   $('info-accordi').textContent = testo.trim() === ''
@@ -762,97 +747,42 @@ function aggiornaInfoAccordi() {
 }
 modulo.testo.addEventListener('input', aggiornaInfoAccordi);
 
-$('file-audio-modulo').addEventListener('change', async (e) => {
-  const files = [...e.target.files];
-  e.target.value = '';
-  for (const file of files) {
-    const nome = await chiediNome('Come vuoi chiamare questo audio?', senzaEstensione(file.name));
-    if (nome) fileScelti.push({ nome, tipo: 'audio', file });
-  }
-  mostraFileScelti();
-});
-
-// ---------- Importazione da PDF ----------
 function scriviStatoPdf(messaggio, errore = false) {
   statoPdf.textContent = messaggio;
   statoPdf.classList.toggle('errore', errore);
 }
 
-filePdf.addEventListener('change', async () => {
-  const file = filePdf.files[0];
-  if (!file) return;
-  filePdf.value = '';
-  scriviStatoPdf('Sto leggendo il PDF…');
-
-  try {
-    const testo = await leggiTestoPdf(file);
-    if (testo !== '' && sembraSpartito(testo)) {
-      const scelta = await chiediScelta(
-        'Questo PDF sembra uno spartito con le note (pentagramma, chiavi…). ' +
-        'Letto come testo diventerebbe una serie di lettere a caso.\n\nCome vuoi caricarlo?',
-        [
-          { valore: 'spartito', testo: '🎼 Come spartito, con le note (consigliato)' },
-          { valore: 'testo', testo: '📄 Come testo lo stesso' },
-        ]
-      );
-      if (scelta === 'spartito') return aggiungiSpartitoAlModulo(file);
-      if (!scelta) return scriviStatoPdf('Caricamento annullato.');
-    }
-    if (testo === '') {
-      // Una scansione o una foto: non c'è testo da leggere, ma si può mostrare così com'è
-      const scelta = await chiediScelta(
-        'In questo PDF non c\'è testo da leggere (probabilmente è una scansione o una foto).\n\n' +
-        'Vuoi mostrarlo così com\'è, come spartito?',
-        [{ valore: 'spartito', testo: '🎼 Sì, mostralo come spartito' }]
-      );
-      if (scelta) return aggiungiSpartitoAlModulo(file);
-      return scriviStatoPdf('Questo PDF non contiene testo leggibile.', true);
-    } else {
-      // Titolo: la prima riga che non è di accordi, altrimenti il nome del file
-      const primaRiga = testo.split('\n').find((r) => r.trim() !== '' && !eRigaDiAccordi(r));
-      modulo.titolo.value = (primaRiga || senzaEstensione(file.name)).trim();
-      // Se il titolo è proprio la prima riga del testo, lo tolgo per non ripeterlo
-      modulo.testo.value =
-        primaRiga && testo.startsWith(primaRiga) ? testo.slice(primaRiga.length).trimStart() : testo;
-      scriviStatoPdf('Fatto! Controlla titolo e testo qui sotto, poi tocca «Salva canto».');
-      aggiornaInfoAccordi();
-    }
-  } catch (err) {
-    console.error(err);
-    scriviStatoPdf('Non sono riuscita a leggere questo PDF.', true);
-    return;
+// Audio scelti nel modulo
+$('file-audio-modulo').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  for (const file of files) {
+    const nome = await chiediNome('Come vuoi chiamare questo audio?', senzaEstensione(file.name));
+    if (!nome) continue;
+    fileScelti.push({ nome, tipo: 'audio', file });
+    if (!modulo.titolo.value.trim()) modulo.titolo.value = nome;
   }
-
-  // Il PDF originale viene tenuto come allegato del canto, col nome che si sceglie
-  const nome = await chiediNome('Come vuoi chiamare questo PDF?', senzaEstensione(file.name));
-  if (nome) {
-    fileScelti = fileScelti.filter((f) => f.tipo !== 'pdf'); // un solo PDF per canto
-    fileScelti.push({ nome, tipo: 'pdf', file });
-    mostraFileScelti();
-  }
+  mostraFileScelti();
 });
 
-// Spartito scelto nel modulo di un canto nuovo: viene salvato insieme al canto
-async function aggiungiSpartitoAlModulo(file) {
-  const nome = await chiediNome('Come vuoi chiamare questo spartito?', senzaEstensione(file.name));
-  if (!nome) return scriviStatoPdf('Caricamento annullato.');
-  fileScelti.push({ nome, tipo: 'spartito', file });
-  mostraFileScelti();
-  if (!modulo.titolo.value.trim()) modulo.titolo.value = nome;
-  scriviStatoPdf('🎼 Spartito pronto: verrà mostrato con le note, così com\'è. Controlla il titolo e tocca «Salva canto».');
-}
-
-$('file-spartito').addEventListener('change', (e) => {
-  const file = e.target.files[0];
+// PDF o foto scelti nel modulo: nel canto si vedranno così come sono, pagina per pagina
+$('file-spartito').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
   e.target.value = '';
-  if (file) aggiungiSpartitoAlModulo(file);
+  for (const file of files) {
+    const nome = await chiediNome('Come vuoi chiamare questo PDF?', senzaEstensione(file.name));
+    if (!nome) continue;
+    fileScelti.push({ nome, tipo: 'spartito', file });
+    if (!modulo.titolo.value.trim()) modulo.titolo.value = nome;
+  }
+  mostraFileScelti();
+  if (fileScelti.length) scriviStatoPdf('Pronto: controlla il titolo, aggiungi gli audio se vuoi, poi tocca «Salva canto».');
 });
 
 modulo.addEventListener('submit', async (e) => {
   e.preventDefault();
   const canto = {
     titolo: modulo.titolo.value.trim(),
-    sezione: modulo.sezione.value,
     cartella: modulo.cartella.value === '' ? null : modulo.cartella.value,
     testo: modulo.testo.value,
   };
@@ -860,15 +790,19 @@ modulo.addEventListener('submit', async (e) => {
   if (id !== null) {
     await Db.aggiornaCanto(id, canto);
   } else {
-    id = await Db.aggiungiCanto(canto);
+    if (!fileScelti.length) {
+      const scelta = await chiediScelta('Non hai caricato né PDF né audio. Vuoi salvare lo stesso il canto, solo con il titolo?',
+        [{ valore: 'si', testo: 'Salva lo stesso' }]);
+      if (!scelta) return;
+    }
+    id = await Db.aggiungiCanto({ ...canto, sezione: 'canti' });
     for (const f of fileScelti) await Db.aggiungiAllegato(id, f.nome, f.tipo, f.file);
   }
   idInModifica = null;
 
   // Dopo il salvataggio, apro il canto
-  sezioneCorrente = canto.sezione;
   cartellaCorrente = canto.cartella;
-  evidenziaSezione();
+  evidenziaSezione('canti');
   mostraCanto(id);
 });
 
@@ -1151,7 +1085,7 @@ $('btn-esci').addEventListener('click', async () => {
   const scelta = await chiediScelta(domanda, [{ valore: 'esci', testo: "Esci dall'account", pericolo: true }]);
   if (!scelta) return;
   await Sync.esci();
-  sezioneCorrente = 'prove';
+  sezioneCorrente = 'canti';
   cartellaCorrente = null;
   avviso("Uscita dall'account effettuata.");
   aggiornaAccount();
@@ -1195,7 +1129,7 @@ $('btn-elimina-account').addEventListener('click', async () => {
   avviso('Eliminazione in corso…');
   try {
     await Sync.eliminaAccount(password);
-    sezioneCorrente = 'prove';
+    sezioneCorrente = 'canti';
     cartellaCorrente = null;
     mostraElenco();
     apriIniziale();
@@ -1402,12 +1336,12 @@ function disegnaChat(lista, salvati) {
     scheda.append(crea('div', 'titolo-condiviso', '♪ ' + c.titolo));
     const files = c.allegati || [];
     const quanti = (tipo) => files.filter((f) => f.tipo === tipo).length;
-    const parti = [NOMI_SEZIONI[c.sezione] || 'Canto'];
+    const parti = [];
     if (c.testo.trim()) parti.push(analizzaTesto(c.testo).conAccordi ? 'testo con accordi' : 'testo');
     if (quanti('audio')) parti.push(`🎵 ${quanti('audio')}`);
     if (quanti('spartito')) parti.push(`🎼 ${quanti('spartito')}`);
     if (quanti('pdf')) parti.push(`📄 ${quanti('pdf')}`);
-    scheda.append(crea('div', 'dettaglio', parti.join(' · ')));
+    scheda.append(crea('div', 'dettaglio', parti.join(' · ') || 'solo titolo'));
 
     const azioni = crea('div', 'azioni-chat');
     if (c.testo.trim()) {
@@ -1502,25 +1436,19 @@ function mostraAnteprima(c) {
 }
 $('chiudi-anteprima').addEventListener('click', () => $('dialogo-anteprima').close());
 
-// Dove salvare un canto ricevuto: una sezione, una sua cartella, o una cartella nuova
+// Dove salvare un canto ricevuto: fuori dalle cartelle, in una cartella, o in una cartella nuova
 async function chiediDestinazione(c) {
-  const sezioni = [c.sezione, ...Object.keys(NOMI_SEZIONI).filter((x) => x !== c.sezione)]
-    .filter((x) => NOMI_SEZIONI[x]);
-  const opzioni = [];
-  for (const sezione of sezioni) {
-    opzioni.push({ valore: { sezione, cartella: null }, testo: `${NOMI_SEZIONI[sezione]} (fuori dalle cartelle)` });
-    for (const cart of (await Db.cartelle(sezione)).filter((x) => !x.libretto)) {
-      opzioni.push({ valore: { sezione, cartella: cart.id, nomeCartella: cart.nome },
-        testo: `${NOMI_SEZIONI[sezione]} › 📁 ${cart.nome}` });
-    }
-    opzioni.push({ valore: { sezione, nuova: true }, testo: `＋ Nuova cartella in ${NOMI_SEZIONI[sezione]}` });
+  const opzioni = [{ valore: { sezione: 'canti', cartella: null }, testo: 'Fuori dalle cartelle' }];
+  for (const cart of (await Db.cartelle()).filter((x) => !x.libretto)) {
+    opzioni.push({ valore: { sezione: 'canti', cartella: cart.id, nomeCartella: cart.nome }, testo: '📁 ' + cart.nome });
   }
-  const scelta = await chiediScelta(`Dove vuoi salvare «${c.titolo}»?`, opzioni);
+  opzioni.push({ valore: { sezione: 'canti', nuova: true }, testo: '＋ In una cartella nuova' });
+  const scelta = await chiediScelta('Dove vuoi salvare «' + c.titolo + '»?', opzioni);
   if (!scelta || !scelta.nuova) return scelta;
-  const nome = await chiediNome(`Nome della nuova cartella in ${NOMI_SEZIONI[scelta.sezione]}`);
+  const nome = await chiediNome('Nome della nuova cartella');
   if (!nome) return null;
-  const id = await Db.aggiungiCartella(nome, scelta.sezione);
-  return { sezione: scelta.sezione, cartella: id, nomeCartella: nome };
+  const id = await Db.aggiungiCartella(nome);
+  return { sezione: 'canti', cartella: id, nomeCartella: nome };
 }
 
 async function salvaCondiviso(c, pulsante) {
@@ -1530,7 +1458,7 @@ async function salvaCondiviso(c, pulsante) {
   pulsante.textContent = '⏳ Salvataggio…';
   try {
     await Gruppi.salva(c, dove, (testo) => (pulsante.textContent = '⏳ ' + testo));
-    const posto = NOMI_SEZIONI[dove.sezione] + (dove.nomeCartella ? ' › ' + dove.nomeCartella : '');
+    const posto = dove.nomeCartella ? '📁 ' + dove.nomeCartella : NOME_ELENCO;
     avviso(`«${c.titolo}» salvato in ${posto}.`);
     pulsante.textContent = '✓ Salvato';
   } catch (err) {
@@ -1559,8 +1487,7 @@ function scegliCanto() {
       const trovati = canti.filter((c) => c.titolo.toLowerCase().includes(testo));
       for (const c of trovati) {
         const btn = crea('button', '', c.titolo);
-        btn.append(crea('span', 'dettaglio', NOMI_SEZIONI[c.sezione]));
-        btn.addEventListener('click', () => fine(c.id));
+                btn.addEventListener('click', () => fine(c.id));
         const li = crea('li');
         li.append(btn);
         lista.append(li);
@@ -1922,7 +1849,7 @@ async function mostraLibretto() {
     const li = crea('li', 'allegato');
     const riga = crea('div', 'allegato-riga');
     const files = v.allegati || [];
-    const dettagli = [NOMI_SEZIONI[v.sezione] || ''];
+    const dettagli = [];
     if (files.some((f) => f.tipo === 'audio')) dettagli.push('🎵');
     if (files.some((f) => f.tipo === 'spartito')) dettagli.push('🎼');
     const nome = crea('button', 'allegato-nome nome-libretto', '♪ ' + v.titolo);
@@ -2255,6 +2182,7 @@ function aggiornaIniziale() {
 
 function chiudiIniziale() {
   paginaIniziale.classList.add('chiusa');
+  ricordaPosizione(schermataAttuale());
 }
 
 // conModulo = true: si apre direttamente il modulo di accesso (es. da "Accedi" nella pagina Account)
@@ -2264,6 +2192,7 @@ function apriIniziale(conModulo = false) {
   aggiornaIniziale();
   paginaIniziale.classList.remove('chiusa');
   paginaIniziale.scrollTop = 0;
+  ricordaPosizione(schermataAttuale());
 }
 
 $('btn-entra').addEventListener('click', () => {
@@ -2277,6 +2206,125 @@ $('btn-senza-account').addEventListener('click', () => {
   messaggioAccount('');
   chiudiIniziale();
 });
+
+// ---------- Tasto "indietro" del telefono ----------
+// Nella cronologia c'è sempre una "pagina" in più: quando si preme indietro il telefono la
+// toglie e noi, invece di uscire dall'app, torniamo alla schermata precedente e la rimettiamo.
+// Dalla schermata principale, per uscire bisogna premere indietro due volte.
+
+let ultimoIndietroAllaRadice = 0;
+
+// Fa un passo indietro dentro l'app; restituisce false se si è già all'inizio
+function passoIndietro() {
+  // una finestrella aperta: la chiudo (come "Annulla")
+  const finestra = document.querySelector('dialog[open]');
+  if (finestra) {
+    const annulla = new Event('cancel', { cancelable: true });
+    finestra.dispatchEvent(annulla);
+    if (!annulla.defaultPrevented && finestra.open) finestra.close();
+    return true;
+  }
+  // pagina iniziale: dal modulo di accesso si torna al pulsante "Canta con noi"
+  if (!paginaIniziale.classList.contains('chiusa')) {
+    if (moduloAperto) {
+      moduloAperto = false;
+      aggiornaIniziale();
+      return true;
+    }
+    return false;
+  }
+  // dentro l'app: come la freccia ‹ in alto
+  if (!btnIndietro.hidden) {
+    btnIndietro.click();
+    return true;
+  }
+  // da Gruppi, Cestino o Account si torna ai Canti
+  if (schermate.elenco.hidden) {
+    cartellaCorrente = null;
+    evidenziaSezione('canti');
+    mostraElenco();
+    return true;
+  }
+  return false;
+}
+
+history.replaceState({ cantaConNoi: 'base' }, '');
+history.pushState({ cantaConNoi: 'app' }, '');
+window.addEventListener('popstate', () => {
+  if (passoIndietro()) {
+    history.pushState({ cantaConNoi: 'app' }, '');
+    return;
+  }
+  if (Date.now() - ultimoIndietroAllaRadice < 2500) {
+    history.back(); // seconda volta: si esce
+    return;
+  }
+  ultimoIndietroAllaRadice = Date.now();
+  avviso('Premi ancora indietro per uscire.');
+  history.pushState({ cantaConNoi: 'app' }, '');
+});
+
+// ---------- Riprendere da dove si era ----------
+// Ogni volta che cambia schermata, ricordo dove si è. Se l'app viene chiusa dal telefono
+// (ad esempio dopo averla messa in sottofondo) e riaperta entro qualche ora, si riparte da lì,
+// senza ripassare dalla pagina iniziale.
+
+const ORE_PER_RIPRENDERE = 8;
+
+function ricordaPosizione(schermata) {
+  try {
+    localStorage.setItem('posizione', JSON.stringify({
+      quando: Date.now(),
+      schermata,
+      cartella: cartellaCorrente,
+      canto: cantoCorrente,
+      gruppo: gruppoCorrente ? gruppoCorrente.id : null,
+      dentro: paginaIniziale.classList.contains('chiusa'),
+    }));
+  } catch (e) { /* va bene lo stesso */ }
+}
+
+function posizioneSalvata() {
+  try {
+    const p = JSON.parse(localStorage.getItem('posizione'));
+    if (p && p.dentro && Date.now() - p.quando < ORE_PER_RIPRENDERE * 3600 * 1000) return p;
+  } catch (e) { /* niente */ }
+  return null;
+}
+
+// Riapre la schermata in cui si era; restituisce false se non c'è niente da riprendere
+async function riprendiPosizione() {
+  const p = posizioneSalvata();
+  if (!p) return false;
+  paginaIniziale.classList.add('senza-animazione', 'chiusa');
+  cartellaCorrente = p.cartella ?? null;
+
+  if (p.schermata === 'canto' && p.canto && (await Db.canto(p.canto))) {
+    await mostraCanto(p.canto);
+    return true;
+  }
+  if (p.schermata === 'cestino') return mostraCestino().then(() => true);
+  if (p.schermata === 'account') { mostraAccount(); return true; }
+  if (p.schermata === 'gruppi' || p.schermata === 'chat' || p.schermata === 'scaletta') {
+    if (p.gruppo && p.schermata !== 'gruppi' && Gruppi.disponibili() && navigator.onLine) {
+      try {
+        const g = (await Gruppi.miei()).find((x) => x.id === p.gruppo);
+        if (g) {
+          await apriChat(g);
+          return true;
+        }
+      } catch (e) { /* torno alla pagina Gruppi */ }
+    }
+    if (p.schermata === 'scaletta' && cartellaCorrente) {
+      await mostraElenco();
+      return true;
+    }
+    await mostraGruppi();
+    return true;
+  }
+  await mostraElenco();
+  return true;
+}
 
 // ---------- Funzionamento offline e installazione ----------
 
@@ -2350,9 +2398,15 @@ btnInstalla.addEventListener('click', async () => {
 
 // Avvio: prima si cancella dal cestino ciò che ha più di 3 giorni,
 // e lo si ricontrolla ogni ora finché l'app resta aperta.
-Db.svuotaCestino().finally(() => {
-  mostraElenco();
+Db.svuotaCestino().finally(async () => {
   // accesso ricordato e sincronizzazione con l'account online
-  Sync.avvia().catch((err) => console.warn(err)).finally(aggiornaIniziale);
+  await Sync.avvia().catch((err) => console.warn(err));
+  aggiornaIniziale();
+  // se l'app era aperta da poco si riparte da dove si era, altrimenti dall'elenco dei canti
+  const ripresa = await riprendiPosizione().catch((err) => {
+    console.warn(err);
+    return false;
+  });
+  if (!ripresa) mostraElenco();
 });
 setInterval(() => Db.svuotaCestino(), 60 * 60 * 1000);

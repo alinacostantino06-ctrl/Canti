@@ -311,18 +311,63 @@ function disegnaTesto(testo) {
 // ---------- Grandezza del testo ----------
 // Scelta con i pulsanti A− / A+: vale per tutti i canti ed è ricordata nel dispositivo.
 const SCALA_MIN = 0.7;
-const SCALA_MAX = 2.5;
+const SCALA_MAX = 4;
 let scalaTesto = 1;
 try { scalaTesto = Number(localStorage.getItem('scalaTesto')) || 1; } catch (e) { /* va bene 1 */ }
 
-function cambiaScala(passo) {
-  scalaTesto = Math.min(SCALA_MAX, Math.max(SCALA_MIN, Math.round((scalaTesto + passo) * 10) / 10));
+const entroLimiti = (s) => Math.min(SCALA_MAX, Math.max(SCALA_MIN, Math.round(s * 10) / 10));
+
+function impostaScala(nuova) {
+  scalaTesto = entroLimiti(nuova);
   try { localStorage.setItem('scalaTesto', scalaTesto); } catch (e) { /* va bene lo stesso */ }
   adattaLarghezza();
   ridisegnaSpartiti();
 }
+const cambiaScala = (passo) => impostaScala(scalaTesto + passo);
 $('btn-testo-meno').addEventListener('click', () => cambiaScala(-0.1));
 $('btn-testo-piu').addEventListener('click', () => cambiaScala(+0.1));
+
+// ---------- Ingrandire con due dita: solo il PDF / il testo, non tutta l'app ----------
+// Mentre si allargano le dita il contenuto si ingrandisce "al volo"; quando si staccano,
+// il PDF viene ridisegnato nitido alla nuova grandezza (come con A− / A+).
+const zonaCanto = $('schermata-canto');
+let pizzico = null;
+const distanzaDita = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+zonaCanto.addEventListener('touchstart', (e) => {
+  if (e.touches.length !== 2) return;
+  e.preventDefault();
+  const centroX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+  const centroY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+  const elementi = [spartitiCanto, testoCanto].filter((el) => el.offsetHeight > 0);
+  for (const el of elementi) {
+    const r = el.getBoundingClientRect();
+    el.style.transformOrigin = `${centroX - r.left}px ${centroY - r.top}px`;
+  }
+  pizzico = { inizio: distanzaDita(e.touches), scala0: scalaTesto, scala: scalaTesto, elementi };
+}, { passive: false });
+
+zonaCanto.addEventListener('touchmove', (e) => {
+  if (!pizzico || e.touches.length !== 2) return;
+  e.preventDefault();
+  pizzico.scala = entroLimiti(pizzico.scala0 * distanzaDita(e.touches) / pizzico.inizio);
+  const fattore = pizzico.scala / pizzico.scala0;
+  for (const el of pizzico.elementi) el.style.transform = `scale(${fattore})`;
+}, { passive: false });
+
+function finePizzico() {
+  if (!pizzico) return;
+  const { scala, elementi } = pizzico;
+  pizzico = null;
+  for (const el of elementi) el.style.transform = '';
+  if (scala !== scalaTesto) impostaScala(scala);
+}
+zonaCanto.addEventListener('touchend', (e) => { if (e.touches.length < 2) finePizzico(); });
+zonaCanto.addEventListener('touchcancel', finePizzico);
+
+// iPhone/iPad: Safari ingrandirebbe comunque tutta la pagina; lo blocco
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('gesturechange', (e) => e.preventDefault());
 
 // Calcola la grandezza del testo del canto.
 // Con gli accordi le righe non vanno a capo: se la più lunga non entra nello

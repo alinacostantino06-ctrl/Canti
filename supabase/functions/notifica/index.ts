@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
     let inviate = 0;
     await Promise.all(iscrizioni.map(async (s) => {
       try {
-        await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, messaggio, { TTL: 86400 });
+        await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, messaggio, { TTL: 86400, urgency: 'high' });
         inviate++;
       } catch (err) {
         // il dispositivo non esiste più (app disinstallata, permesso tolto): lo dimentico

@@ -10,7 +10,7 @@
 // Se aggiungi un NUOVO file all'app (es. un altro .js), aggiungilo a FILE_APP
 // e cambia il numero di VERSIONE.
 
-const VERSIONE = 'canti-v11';
+const VERSIONE = 'canti-v12';
 
 const FILE_APP = [
   './',
@@ -107,6 +107,8 @@ self.addEventListener('push', (evento) => {
     badge: 'icons/badge-96.png', // icona piccola nella barra di Android (solo bianca)
     tag: dati.gruppo ? 'gruppo-' + dati.gruppo + '-' + (dati.scheda || '') : undefined,
     renotify: !!dati.gruppo,
+    vibrate: [200, 100, 200], // vibrazione: aiuta Android a mostrarla "a comparsa"
+    silent: false,
     data: { gruppo: dati.gruppo || null, scheda: dati.scheda || 'bacheca' },
   }));
 });

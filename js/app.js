@@ -49,6 +49,11 @@ function mostra(nome, titoloBarra, conIndietro) {
   if (nome !== 'canto' && nome !== 'scaletta') percorsoScaletta = null;
   if (nome !== 'canto') {
     fermaCorrezioni();
+    // le pagine dello spartito occupano memoria: le tolgo
+    disegnoInCorso++;
+    chiudiPdf();
+    spartitiCanto.innerHTML = '';
+    delete spartitiCanto.dataset.canto;
     cantoEsterno = null;
     tornaAlLibretto = false;
   }
@@ -437,59 +442,93 @@ function disegnaTesto(testo) {
   adattaLarghezza();
 }
 
-// ---------- Grandezza del testo ----------
-// Scelta con i pulsanti A− / A+: vale per tutti i canti ed è ricordata nel dispositivo.
+// ---------- Grandezza (zoom) di spartiti e testo ----------
+// Scelta con i pulsanti A− / A+ o allargando due dita: vale per tutti i canti ed è ricordata.
+// Lo zoom cambia solo le dimensioni di quello che è già disegnato (è istantaneo e fluido);
+// poco dopo, se serve, le pagine del PDF vengono ridisegnate più nitide "dietro le quinte".
 const SCALA_MIN = 0.7;
 const SCALA_MAX = 4;
 let scalaTesto = 1;
 try { scalaTesto = Number(localStorage.getItem('scalaTesto')) || 1; } catch (e) { /* va bene 1 */ }
 
 const entroLimiti = (s) => Math.min(SCALA_MAX, Math.max(SCALA_MIN, Math.round(s * 10) / 10));
+const entroLimitiFine = (s) => Math.min(SCALA_MAX, Math.max(SCALA_MIN, s));
+
+function ricordaScala() {
+  try { localStorage.setItem('scalaTesto', scalaTesto); } catch (e) { /* va bene lo stesso */ }
+}
+
+// Cambia lo zoom tenendo fermo il punto (vx, vy) dello schermo (dove sono le dita, o il centro)
+function zoomAttorno(nuova, vx, vy, ancora = null) {
+  const a = ancora || ancoraZoom(vx, vy);
+  scalaTesto = nuova;
+  applicaFontTesto();
+  applicaScalaSpartiti();
+  // rimetto sotto le dita lo stesso punto di prima
+  const r = a.el.getBoundingClientRect();
+  if (a.el === spartitiCanto) spartitiCanto.scrollLeft = a.x * scalaTesto - (vx - r.left);
+  window.scrollTo(window.scrollX, r.top + window.scrollY + a.y * scalaTesto - vy);
+}
+
+// Il punto sotto (vx, vy), in proporzione allo zoom attuale, nello spartito o nel testo
+function ancoraZoom(vx, vy) {
+  const sp = spartitiCanto.getBoundingClientRect();
+  const el = spartitiCanto.offsetHeight > 0 && (vy <= sp.bottom || testoCanto.offsetHeight === 0) ? spartitiCanto : testoCanto;
+  const r = el.getBoundingClientRect();
+  return {
+    el,
+    x: (vx - r.left + (el === spartitiCanto ? spartitiCanto.scrollLeft : 0)) / scalaTesto,
+    y: (vy - r.top) / scalaTesto,
+  };
+}
 
 function impostaScala(nuova) {
-  scalaTesto = entroLimiti(nuova);
-  try { localStorage.setItem('scalaTesto', scalaTesto); } catch (e) { /* va bene lo stesso */ }
-  adattaLarghezza();
-  ridisegnaSpartiti();
+  zoomAttorno(entroLimiti(nuova), window.innerWidth / 2, window.innerHeight / 2);
+  ricordaScala();
+  programmaNitidezza();
 }
 const cambiaScala = (passo) => impostaScala(scalaTesto + passo);
 $('btn-testo-meno').addEventListener('click', () => cambiaScala(-0.1));
 $('btn-testo-piu').addEventListener('click', () => cambiaScala(+0.1));
 
 // ---------- Ingrandire con due dita: solo il PDF / il testo, non tutta l'app ----------
-// Mentre si allargano le dita il contenuto si ingrandisce "al volo"; quando si staccano,
-// il PDF viene ridisegnato nitido alla nuova grandezza (come con A− / A+).
+// Lo zoom segue le dita in tempo reale (una volta per fotogramma), tenendo fermo il punto
+// tra le due dita; spostando le dita insieme si scorre.
 const zonaCanto = $('schermata-canto');
 let pizzico = null;
+let fotogrammaPizzico = 0;
 const distanzaDita = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+const centroDita = (t) => [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2];
 
 zonaCanto.addEventListener('touchstart', (e) => {
   if (e.touches.length !== 2) return;
   e.preventDefault();
-  const centroX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-  const centroY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-  const elementi = [spartitiCanto, testoCanto].filter((el) => el.offsetHeight > 0);
-  for (const el of elementi) {
-    const r = el.getBoundingClientRect();
-    el.style.transformOrigin = `${centroX - r.left}px ${centroY - r.top}px`;
-  }
-  pizzico = { inizio: distanzaDita(e.touches), scala0: scalaTesto, scala: scalaTesto, elementi };
+  const [vx, vy] = centroDita(e.touches);
+  pizzico = { inizio: distanzaDita(e.touches), scala0: scalaTesto, scala: scalaTesto, vx, vy, ancora: ancoraZoom(vx, vy) };
 }, { passive: false });
 
 zonaCanto.addEventListener('touchmove', (e) => {
   if (!pizzico || e.touches.length !== 2) return;
   e.preventDefault();
-  pizzico.scala = entroLimiti(pizzico.scala0 * distanzaDita(e.touches) / pizzico.inizio);
-  const fattore = pizzico.scala / pizzico.scala0;
-  for (const el of pizzico.elementi) el.style.transform = `scale(${fattore})`;
+  pizzico.scala = entroLimitiFine(pizzico.scala0 * distanzaDita(e.touches) / pizzico.inizio);
+  [pizzico.vx, pizzico.vy] = centroDita(e.touches);
+  if (!fotogrammaPizzico) {
+    fotogrammaPizzico = requestAnimationFrame(() => {
+      fotogrammaPizzico = 0;
+      if (pizzico) zoomAttorno(pizzico.scala, pizzico.vx, pizzico.vy, pizzico.ancora);
+    });
+  }
 }, { passive: false });
 
 function finePizzico() {
   if (!pizzico) return;
-  const { scala, elementi } = pizzico;
+  const p = pizzico;
   pizzico = null;
-  for (const el of elementi) el.style.transform = '';
-  if (scala !== scalaTesto) impostaScala(scala);
+  cancelAnimationFrame(fotogrammaPizzico);
+  fotogrammaPizzico = 0;
+  zoomAttorno(Math.round(p.scala * 100) / 100, p.vx, p.vy, p.ancora);
+  ricordaScala();
+  programmaNitidezza();
 }
 zonaCanto.addEventListener('touchend', (e) => { if (e.touches.length < 2) finePizzico(); });
 zonaCanto.addEventListener('touchcancel', finePizzico);
@@ -501,8 +540,9 @@ document.addEventListener('gesturechange', (e) => e.preventDefault());
 // Calcola la grandezza del testo del canto.
 // Con gli accordi le righe non vanno a capo: se la più lunga non entra nello
 // schermo, parto da un carattere più piccolo che la faccia stare (non sotto
-// gli 11px). Poi applico la grandezza scelta con A− / A+: se si ingrandisce
-// molto, le righe con accordi si scorrono di lato.
+// gli 11px). Poi applico lo zoom: se si ingrandisce molto, le righe con accordi
+// si scorrono di lato. (La misura si fa una volta sola per canto: lo zoom poi è veloce.)
+let baseTesto = 16;
 function adattaLarghezza() {
   testoCanto.style.fontSize = '';
   let base = parseFloat(getComputedStyle(testoCanto).fontSize);
@@ -510,7 +550,11 @@ function adattaLarghezza() {
     const proporzione = testoCanto.clientWidth / testoCanto.scrollWidth;
     if (proporzione < 1) base = Math.max(11, base * proporzione);
   }
-  testoCanto.style.fontSize = Math.floor(base * scalaTesto * 10) / 10 + 'px';
+  baseTesto = base;
+  applicaFontTesto();
+}
+function applicaFontTesto() {
+  testoCanto.style.fontSize = Math.round(baseTesto * scalaTesto * 10) / 10 + 'px';
   $('valore-zoom').textContent = Math.round(scalaTesto * 100) + '%';
   $('btn-testo-meno').disabled = scalaTesto <= SCALA_MIN;
   $('btn-testo-piu').disabled = scalaTesto >= SCALA_MAX;
@@ -518,7 +562,8 @@ function adattaLarghezza() {
 window.addEventListener('resize', () => {
   if (schermate.canto.hidden) return;
   adattaLarghezza();
-  ridisegnaSpartiti();
+  applicaScalaSpartiti();
+  programmaNitidezza();
 });
 
 // I file del canto aperto (uno dei miei, del libretto, oppure uno condiviso aperto dalla chat)
@@ -699,21 +744,47 @@ async function mostraAllegati() {
 
 const spartitiCanto = $('spartiti-canto');
 let disegnoInCorso = 0; // per fermare un disegno vecchio se nel frattempo si cambia canto
+let documentiPdf = [];  // i PDF aperti del canto (servono per ridisegnarli più nitidi)
+const PIXEL_MAX_PAGINA = 12e6; // oltre, i telefoni (soprattutto iPhone) non disegnano la pagina
+
+// (misuro la pagina del canto: il contenitore degli spartiti, se è vuoto, è nascosto)
+const larghezzaBase = () => schermate.canto.clientWidth;
+const densitaSchermo = () => Math.min(window.devicePixelRatio || 1, 3);
+
+// Quanti pixel di larghezza servono per una pagina nitida allo zoom attuale
+function pixelNitidi(rapporto) {
+  const voluti = larghezzaBase() * Math.max(scalaTesto, 1) * densitaSchermo();
+  return Math.max(1, Math.floor(Math.min(voluti, Math.sqrt(PIXEL_MAX_PAGINA / rapporto))));
+}
+
+// Lo zoom degli spartiti: cambio solo la larghezza delle pagine (istantaneo)
+function applicaScalaSpartiti() {
+  const larghezza = Math.floor(larghezzaBase() * scalaTesto) + 'px';
+  spartitiCanto.querySelectorAll('.pagina-spartito').forEach((f) => (f.style.width = larghezza));
+}
+
+function chiudiPdf() {
+  documentiPdf.forEach((pdf) => pdf.destroy());
+  documentiPdf = [];
+}
 
 async function disegnaSpartiti() {
   const mio = ++disegnoInCorso;
   const spartiti = (await allegatiAperti()).filter((a) => a.tipo === 'spartito' || a.tipo === 'pdf');
   if (mio !== disegnoInCorso) return;
-  spartitiCanto.innerHTML = '';
-  spartitiCanto.style.setProperty('--scala', scalaTesto);
-
-  // (misuro la pagina del canto: il contenitore degli spartiti, finché è vuoto, è nascosto)
-  const larghezza = Math.floor(schermate.canto.clientWidth * scalaTesto);
-  const densita = Math.min(window.devicePixelRatio || 1, 3);
+  const vecchiPdf = documentiPdf;
+  documentiPdf = [];
+  // Se si sta solo aggiornando lo stesso canto (es. arrivano dati dall'account) preparo le
+  // pagine da parte e le scambio alla fine, così non sparisce niente sotto gli occhi.
+  const stessoCanto = spartitiCanto.dataset.canto === String(cantoCorrente) && !!spartitiCanto.firstChild;
+  const dove = stessoCanto ? document.createElement('div') : spartitiCanto;
+  if (!stessoCanto) spartitiCanto.innerHTML = '';
+  spartitiCanto.dataset.canto = String(cantoCorrente);
+  const larghezza = Math.floor(larghezzaBase() * scalaTesto) + 'px';
 
   for (const a of spartiti) {
     const blocco = crea('div', 'spartito');
-    spartitiCanto.append(blocco);
+    dove.append(blocco);
     if (!a.dati) {
       blocco.append(crea('p', 'dettaglio', `🎼 ${a.nome} · ⏳ in arrivo…`));
       continue;
@@ -725,12 +796,13 @@ async function disegnaSpartiti() {
       indirizziFile.push(url);
       const img = crea('img');
       img.alt = 'Spartito: ' + a.nome;
-      img.style.width = larghezza + 'px';
       const foglio = foglioPerPagina(a.id, 1, img);
+      foglio.style.width = larghezza;
       img.onload = () => {
         const strato = foglio.querySelector('.strato-correzioni');
-        strato.width = Math.floor(larghezza * densita);
-        strato.height = Math.floor(larghezza * densita * img.naturalHeight / img.naturalWidth);
+        const rapporto = img.naturalHeight / img.naturalWidth;
+        strato.width = pixelNitidi(rapporto);
+        strato.height = Math.floor(strato.width * rapporto);
         disegnaStrato(foglio);
       };
       img.src = url;
@@ -742,36 +814,84 @@ async function disegnaSpartiti() {
     try {
       // pdf.js "consuma" i dati che riceve: gli passo una copia
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(a.dati.slice(0)) }).promise;
+      if (mio !== disegnoInCorso) return pdf.destroy();
+      documentiPdf.push(pdf);
       for (let n = 1; n <= pdf.numPages; n++) {
-        if (mio !== disegnoInCorso) return pdf.destroy();
+        if (mio !== disegnoInCorso) return;
         const pagina = await pdf.getPage(n);
         const base = pagina.getViewport({ scale: 1 });
-        const vista = pagina.getViewport({ scale: (larghezza / base.width) * densita });
+        const rapporto = base.height / base.width;
+        const pixel = pixelNitidi(rapporto);
+        const vista = pagina.getViewport({ scale: pixel / base.width });
         const tela = crea('canvas');
         tela.width = Math.floor(vista.width);
         tela.height = Math.floor(vista.height);
-        tela.style.width = larghezza + 'px';
         tela.setAttribute('aria-label', `Spartito: ${a.nome}, pagina ${n}`);
         const foglio = foglioPerPagina(a.id, n, tela, tela.width, tela.height);
+        foglio.style.width = larghezza;
+        foglio.paginaPdf = pagina; // per ridisegnarla più nitida
         blocco.append(foglio);
         disegnaStrato(foglio);
         await pagina.render({ canvasContext: tela.getContext('2d'), viewport: vista }).promise;
       }
-      pdf.destroy();
-      aggiornaComandiCorrezioni();
     } catch (err) {
+      if (mio !== disegnoInCorso) return;
       console.error(err);
       blocco.append(crea('p', 'dettaglio', `Non è stato possibile mostrare lo spartito «${a.nome}».`));
     }
   }
+  if (mio !== disegnoInCorso) return;
+  if (stessoCanto) {
+    const x = spartitiCanto.scrollLeft;
+    spartitiCanto.replaceChildren(...dove.childNodes);
+    spartitiCanto.scrollLeft = x;
+  }
+  vecchiPdf.forEach((pdf) => pdf.destroy());
+  applicaScalaSpartiti(); // (lo zoom può essere cambiato mentre disegnavo)
+  aggiornaComandiCorrezioni();
+  programmaNitidezza();
 }
 
-// Dopo A− / A+ o un cambio di larghezza, ridisegno (aspettando un attimo)
-let timerSpartiti = null;
-function ridisegnaSpartiti() {
-  if (!spartitiCanto.querySelector('.spartito')) return;
-  clearTimeout(timerSpartiti);
-  timerSpartiti = setTimeout(disegnaSpartiti, 250);
+// Dopo uno zoom: le pagine che ora sembrerebbero sfocate vengono ridisegnate più nitide.
+// Disegno su un foglio a parte e poi copio in un colpo solo: la pagina non sparisce mai.
+let timerNitidezza = null;
+let nitidezzaInCorso = 0;
+function programmaNitidezza() {
+  clearTimeout(timerNitidezza);
+  timerNitidezza = setTimeout(rendiNitidi, 300);
+}
+async function rendiNitidi() {
+  const mio = ++nitidezzaInCorso;
+  const disegno = disegnoInCorso;
+  for (const foglio of spartitiCanto.querySelectorAll('.pagina-spartito')) {
+    if (mio !== nitidezzaInCorso || disegno !== disegnoInCorso || pizzico) return;
+    const strato = foglio.querySelector('.strato-correzioni');
+    const tela = foglio.paginaPdf && foglio.querySelector('canvas:not(.strato-correzioni)');
+    const rapporto = tela ? tela.height / tela.width : strato.height / (strato.width || 1);
+    const pixel = pixelNitidi(rapporto);
+    const attuale = tela ? tela.width : strato.width;
+    // ridisegno solo se la differenza si vede (più nitido) o se occupa troppa memoria
+    if (!attuale || (pixel <= attuale * 1.15 && pixel >= attuale * 0.6)) continue;
+    if (tela) {
+      try {
+        const base = foglio.paginaPdf.getViewport({ scale: 1 });
+        const vista = foglio.paginaPdf.getViewport({ scale: pixel / base.width });
+        const nuova = document.createElement('canvas');
+        nuova.width = Math.floor(vista.width);
+        nuova.height = Math.floor(vista.height);
+        await foglio.paginaPdf.render({ canvasContext: nuova.getContext('2d'), viewport: vista }).promise;
+        if (mio !== nitidezzaInCorso || disegno !== disegnoInCorso) return;
+        tela.width = nuova.width;
+        tela.height = nuova.height;
+        tela.getContext('2d').drawImage(nuova, 0, 0);
+      } catch (err) {
+        continue; // (il PDF è stato chiuso: si è cambiato canto)
+      }
+    }
+    strato.width = tela ? tela.width : pixel;
+    strato.height = tela ? tela.height : Math.floor(pixel * rapporto);
+    disegnaStrato(foglio);
+  }
 }
 
 // ---------- Correzioni del direttore sopra lo spartito ----------

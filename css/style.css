@@ -1434,3 +1434,7 @@ body.correggendo #schermata-canto { padding-bottom: 9rem; }
 .btn-allega:disabled { opacity: 0.5; }
 .privati .scheda-canto { margin-top: 0.2rem; }
 .scrivi-avviso textarea { min-width: 0; }
+
+/* Zoom fluido: la pagina dello spartito si allarga, il disegno la riempie */
+.spartito .pagina-spartito > canvas:first-child,
+.spartito .pagina-spartito > img { width: 100%; height: auto; }

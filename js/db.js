@@ -523,8 +523,9 @@ const Db = {
   // La cartella 📖 del libretto di un coro (una sola per coro)
   idCartellaLibretto: (gruppoId) => 'libretto:' + gruppoId,
 
-  // gruppo: { id, nome }; voce: riga del libretto; files: [{ id, nome, tipo, mime, dati }]
-  salvaCantoLibretto: (gruppo, voce, files) =>
+  // gruppo: { id, nome }; voce: riga del libretto; files: [{ id, nome, tipo, mime, dati, voce }]
+  // filtro: la voce per cui sono stati scelti i file ('' = tutti i file)
+  salvaCantoLibretto: (gruppo, voce, files, filtro = '') =>
     operazione(['canti', 'cartelle', 'allegati'], 'readwrite', (tx) => {
       const idCartella = Db.idCartellaLibretto(gruppo.id);
       tx.objectStore('cartelle').put({ id: idCartella, nome: '📖 ' + gruppo.nome, sezione: 'canti',
@@ -532,13 +533,13 @@ const Db = {
       tx.objectStore('canti').put({
         id: voce.id, titolo: voce.titolo, sezione: 'canti', cartella: idCartella, testo: voce.testo,
         creato: Date.parse(voce.aggiornato) || Date.now(), modificato: Date.now(),
-        libretto: { gruppo: gruppo.id, nomeGruppo: gruppo.nome, aggiornato: voce.aggiornato },
+        libretto: { gruppo: gruppo.id, nomeGruppo: gruppo.nome, aggiornato: voce.aggiornato, filtro },
       });
       const allegati = tx.objectStore('allegati');
       allegati.index('cantoId').getAllKeys(voce.id).onsuccess = (e) => {
         e.target.result.forEach((k) => allegati.delete(k));
         for (const f of files) {
-          allegati.put({ id: f.id, cantoId: voce.id, nome: f.nome, tipo: f.tipo, mime: f.mime,
+          allegati.put({ id: f.id, cantoId: voce.id, nome: f.nome, tipo: f.tipo, mime: f.mime, voce: f.voce || '',
             dati: f.dati, fileInviato: true, modificato: Date.now(), libretto: true });
         }
       };

@@ -213,8 +213,33 @@
         </div>
       </div>
 
+      <!-- Correzioni del direttore sopra lo spartito (il PDF originale resta com'è) -->
+      <div id="comandi-correzioni" class="comandi" hidden>
+        <button id="btn-correggi" class="btn-piccolo" hidden>✏️ Correggi lo spartito</button>
+        <button id="btn-originale" class="btn-piccolo" hidden>👁 Vedi l'originale</button>
+      </div>
+
       <!-- Spartiti (pentagramma con le note), mostrati così come sono -->
       <div id="spartiti-canto" class="spartiti"></div>
+
+      <!-- Strumenti per correggere (in fondo allo schermo, solo mentre si corregge) -->
+      <div id="barra-correzioni" class="barra-correzioni" hidden>
+        <div class="strumenti">
+          <button data-strumento="penna" data-colore="#d0021b" class="attivo" aria-label="Penna rossa"><span class="punta" style="background:#d0021b"></span></button>
+          <button data-strumento="penna" data-colore="#1f4fd1" aria-label="Penna blu"><span class="punta" style="background:#1f4fd1"></span></button>
+          <button data-strumento="penna" data-colore="#111111" aria-label="Penna nera"><span class="punta" style="background:#111"></span></button>
+          <button data-strumento="evidenziatore" data-colore="#ffd400" aria-label="Evidenziatore"><span class="punta larga" style="background:#ffd400"></span></button>
+          <button data-strumento="testo" data-colore="#d0021b" aria-label="Scrivi una parola">T</button>
+          <button data-strumento="gomma" aria-label="Gomma">⌫</button>
+          <button data-strumento="mano" aria-label="Scorri la pagina">✋</button>
+        </div>
+        <div class="strumenti">
+          <button id="btn-annulla-segno" aria-label="Annulla l'ultima modifica">↶</button>
+          <button id="btn-togli-correzioni" aria-label="Togli tutte le correzioni">🗑</button>
+          <span id="stato-correzioni" class="stato-correzioni"></span>
+          <button id="btn-fine-correzioni" class="fine">✓ Fine</button>
+        </div>
+      </div>
 
       <div id="testo-canto" class="testo-canto"></div>
 
@@ -280,10 +305,11 @@
 
       <!-- Schede (solo nei gruppi Coro) -->
       <div id="schede-coro" class="schede" role="tablist" hidden>
-        <button data-scheda="bacheca">📣 Bacheca</button>
-        <button data-scheda="scalette">📅 Scalette</button>
-        <button data-scheda="libretto">📖 Libretto</button>
-        <button data-scheda="chat" class="attiva">♪ Condivisi</button>
+        <button data-scheda="bacheca"><span class="ic">📣</span>Bacheca</button>
+        <button data-scheda="scalette"><span class="ic">📅</span>Scalette</button>
+        <button data-scheda="libretto"><span class="ic">📖</span>Libretto</button>
+        <button data-scheda="messaggi"><span class="ic">✉️</span>Messaggi<span id="pallino-messaggi" class="pallino-scheda" hidden></span></button>
+        <button data-scheda="chat" class="attiva"><span class="ic">♪</span>Condivisi</button>
       </div>
 
       <!-- Bacheca: gli avvisi del direttore, come in una chat (solo i direttori scrivono) -->
@@ -302,6 +328,27 @@
         <p id="chat-vuota" class="vuoto" hidden>Nessun canto condiviso ancora.<br>Inizia tu!</p>
         <div class="barra-chat">
           <button id="btn-condividi-qui" class="btn-grande">♪ Condividi un canto</button>
+        </div>
+      </div>
+
+      <!-- Messaggi privati: l'elenco delle persone del coro e, toccandone una, la conversazione -->
+      <div id="pannello-messaggi" hidden>
+        <div id="scegli-conversazione">
+          <p class="nota-cestino">Messaggi privati: li leggete solo tu e la persona a cui scrivi.</p>
+          <ul id="elenco-conversazioni" class="elenco"></ul>
+          <p id="conversazioni-vuote" class="vuoto" hidden>Nel coro per ora ci sei solo tu.</p>
+        </div>
+        <div id="conversazione" hidden>
+          <div class="testa-conversazione">
+            <button id="btn-chiudi-conversazione" class="btn-piccolo">‹ Tutti</button>
+            <strong id="nome-conversazione"></strong>
+          </div>
+          <ul id="elenco-privati" class="chat"></ul>
+          <p id="privati-vuoti" class="vuoto" hidden>Ancora nessun messaggio: scrivi il primo!</p>
+          <form id="scrivi-privato" class="scrivi-avviso">
+            <textarea id="testo-privato" rows="1" maxlength="2000" placeholder="Scrivi un messaggio…" aria-label="Messaggio privato"></textarea>
+            <button type="submit" class="btn-invia" aria-label="Invia">➤</button>
+          </form>
         </div>
       </div>
 
@@ -398,6 +445,19 @@
   <dialog id="dialogo-scelta" class="dialogo">
     <p id="scelta-domanda"></p>
     <div id="scelta-opzioni" class="scelta-opzioni"></div>
+  </dialog>
+
+  <!-- Finestrella per dire per quale voce è ogni file (libretto del coro) -->
+  <dialog id="dialogo-voci" class="dialogo dialogo-alto">
+    <form method="dialog">
+      <p id="voci-domanda">Per chi è ogni file?</p>
+      <p class="dettaglio">Chi ha scelto la sua voce riceverà solo i file della sua voce e quelli «per tutti». I direttori li ricevono tutti.</p>
+      <ul id="voci-file" class="voci-file"></ul>
+      <div class="scelta-opzioni">
+        <button value="ok" class="btn-grande">Va bene</button>
+        <button value="annulla" class="btn-piccolo">Annulla</button>
+      </div>
+    </form>
   </dialog>
 
   <!-- Finestrella per scegliere uno dei miei canti (da condividere) -->

@@ -10,7 +10,7 @@
 // Se aggiungi un NUOVO file all'app (es. un altro .js), aggiungilo a FILE_APP
 // e cambia il numero di VERSIONE.
 
-const VERSIONE = 'canti-v12';
+const VERSIONE = 'canti-v14';
 
 const FILE_APP = [
   './',
@@ -105,28 +105,29 @@ self.addEventListener('push', (evento) => {
     body: dati.testo || '',
     icon: 'icons/icon-192.png',
     badge: 'icons/badge-96.png', // icona piccola nella barra di Android (solo bianca)
-    tag: dati.gruppo ? 'gruppo-' + dati.gruppo + '-' + (dati.scheda || '') : undefined,
+    tag: dati.gruppo ? 'gruppo-' + dati.gruppo + '-' + (dati.scheda || '') + (dati.con ? '-' + dati.con : '') : undefined,
     renotify: !!dati.gruppo,
     vibrate: [200, 100, 200], // vibrazione: aiuta Android a mostrarla "a comparsa"
     silent: false,
-    data: { gruppo: dati.gruppo || null, scheda: dati.scheda || 'bacheca' },
+    data: { gruppo: dati.gruppo || null, scheda: dati.scheda || 'bacheca', con: dati.con || null },
   }));
 });
 
 // Toccando la notifica si apre l'app direttamente sul gruppo (nella scheda giusta)
 self.addEventListener('notificationclick', (evento) => {
   evento.notification.close();
-  const { gruppo, scheda } = evento.notification.data || {};
+  const { gruppo, scheda, con } = evento.notification.data || {};
   const indirizzo = new URL('./', self.registration.scope);
   if (gruppo) {
     indirizzo.searchParams.set('gruppo', gruppo);
     indirizzo.searchParams.set('scheda', scheda || 'bacheca');
+    if (con) indirizzo.searchParams.set('con', con);
   }
   evento.waitUntil((async () => {
     const finestre = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const finestra of finestre) {
       if ('focus' in finestra) {
-        finestra.postMessage({ tipo: 'apri-gruppo', gruppo, scheda });
+        finestra.postMessage({ tipo: 'apri-gruppo', gruppo, scheda, con });
         return finestra.focus();
       }
     }

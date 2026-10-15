@@ -152,7 +152,8 @@ const Gruppi = {
   eliminaAvviso: (id) => conMessaggio(Sync.client.from('avvisi').delete().eq('id', id)),
 
   // ---- Carico i file di un canto in uno spazio del gruppo ----
-  async _caricaFile(cartella, files, avanzamento) {
+  // vociFile: { [id del file sul mio dispositivo]: 'soprano' | 'contralto' | 'tenore' | 'basso' | '' (per tutti) }
+  async _caricaFile(cartella, files, avanzamento, vociFile = {}) {
     const caricati = [];
     for (let i = 0; i < files.length; i++) {
       const a = files[i];
@@ -166,7 +167,7 @@ const Gruppi = {
         if (caricati.length) await Sync.client.storage.from(BUCKET_CONDIVISI).remove(caricati.map((f) => f.percorso));
         throw new Error(spiegaErroreGruppi(error));
       }
-      caricati.push({ id, nome: a.nome, tipo: a.tipo, mime: a.mime || null, percorso });
+      caricati.push({ id, nome: a.nome, tipo: a.tipo, mime: a.mime || null, percorso, voce: vociFile[a.id] || '' });
     }
     return caricati;
   },
@@ -178,11 +179,11 @@ const Gruppi = {
   },
 
   // Aggiunge al libretto uno dei miei canti (con i suoi file)
-  async aggiungiAlLibretto(gruppoId, cantoId, avanzamento = () => {}) {
+  async aggiungiAlLibretto(gruppoId, cantoId, avanzamento = () => {}, vociFile = {}) {
     const canto = await Db.canto(cantoId);
     const files = (await Db.allegati(cantoId)).filter((a) => a.dati);
     const id = nuovoId();
-    const allegati = await this._caricaFile(gruppoId + '/libretto/' + id, files, avanzamento);
+    const allegati = await this._caricaFile(gruppoId + '/libretto/' + id, files, avanzamento, vociFile);
     avanzamento('Aggiungo il canto al libretto…');
     try {
       await conMessaggio(Sync.client.from('libretto').insert({
@@ -197,17 +198,26 @@ const Gruppi = {
   },
 
   // Rimette nel libretto la versione attuale del canto del direttore da cui viene
-  async aggiornaNelLibretto(voce, avanzamento = () => {}) {
+  async aggiornaNelLibretto(voce, avanzamento = () => {}, vociFile = {}) {
     const canto = voce.canto_origine && (await Db.canto(voce.canto_origine));
     if (!canto || canto.eliminato) throw new Error('Il canto originale non è più tra i tuoi canti: non si può aggiornare.');
     const files = (await Db.allegati(canto.id)).filter((a) => a.dati);
-    const allegati = await this._caricaFile(voce.gruppo_id + '/libretto/' + voce.id, files, avanzamento);
+    const allegati = await this._caricaFile(voce.gruppo_id + '/libretto/' + voce.id, files, avanzamento, vociFile);
     await conMessaggio(Sync.client.from('libretto').update({
       titolo: canto.titolo, sezione: canto.sezione, testo: canto.testo || '', allegati,
     }).eq('id', voce.id));
+    // i file sono nuovi: le correzioni fatte sui vecchi non valgono più
+    await Sync.client.from('correzioni').delete().eq('libretto_id', voce.id);
     const vecchi = (voce.allegati || []).map((f) => f.percorso);
     if (vecchi.length) await Sync.client.storage.from(BUCKET_CONDIVISI).remove(vecchi);
   },
+
+  // Cambia per quale voce è ogni file di un canto del libretto (i file restano gli stessi)
+  // vociPerFile: { [id del file nel libretto]: voce }
+  impostaVociLibretto: (voce, vociPerFile) =>
+    conMessaggio(Sync.client.from('libretto').update({
+      allegati: (voce.allegati || []).map((f) => ({ ...f, voce: vociPerFile[f.id] || '' })),
+    }).eq('id', voce.id)),
 
   async rimuoviDalLibretto(voce) {
     await conMessaggio(Sync.client.from('libretto').delete().eq('id', voce.id));
@@ -252,27 +262,44 @@ const Gruppi = {
     for (const g of gruppi) {
       const attivo = this.coroAttivo(g);
       const posto = await this.mioPosto(g.id);
+      const ruolo = g.creato_da === Sync.utente.id ? 'direttore' : posto.ruolo;
       await Db.salvaImpostazione('coro:' + g.id, {
-        nome: g.nome, attivo, fino: g.coro_fino_al,
-        ruolo: g.creato_da === Sync.utente.id ? 'direttore' : posto.ruolo, voce: posto.voce,
+        nome: g.nome, attivo, fino: g.coro_fino_al, ruolo, voce: posto.voce,
       });
       if (!attivo) continue; // scaduto: tengo la copia che c'è, ma non la aggiorno
+
+      // I direttori ricevono tutti i file; gli altri, se hanno scelto la loro voce,
+      // solo quelli della loro voce e quelli per tutti
+      const filtro = ruolo === 'direttore' ? '' : posto.voce || '';
+      const perMe = (f) => !filtro || !f.voce || f.voce === filtro;
 
       const remoti = await this.libretto(g.id);
       const locali = new Map((await Db.librettoInCache(g.id)).map((c) => [c.id, c]));
       for (const voce of remoti) {
         const locale = locali.get(voce.id);
         if (locale && locale.libretto.aggiornato === voce.aggiornato && locale.libretto.nomeGruppo === g.nome &&
-            locale.cartella === Db.idCartellaLibretto(g.id)) continue;
+            (locale.libretto.filtro || '') === filtro && locale.cartella === Db.idCartellaLibretto(g.id)) continue;
         avanzamento('Scarico il libretto: «' + voce.titolo + '»…');
+        // i file che ho già (stesso id) non li riscarico
+        const giaQui = new Map((await Db.allegati(voce.id)).filter((a) => a.dati).map((a) => [a.id, a.dati]));
         const files = [];
-        for (const f of voce.allegati || []) {
+        for (const f of (voce.allegati || []).filter(perMe)) {
+          if (giaQui.has(f.id)) {
+            files.push({ ...f, dati: giaQui.get(f.id) });
+            continue;
+          }
           const { data, error } = await Sync.client.storage.from(BUCKET_CONDIVISI).download(f.percorso);
           if (!error) files.push({ ...f, dati: await data.arrayBuffer() });
         }
-        await Db.salvaCantoLibretto(g, voce, files);
+        await Db.salvaCantoLibretto(g, voce, files, filtro);
         cambiato = true;
       }
+      // le correzioni del direttore sugli spartiti (anche per usarle senza internet)
+      const correzioni = {};
+      for (const c of await this.correzioni(g.id)) {
+        (correzioni[c.libretto_id] = correzioni[c.libretto_id] || {})[c.allegato_id] = c.segni || [];
+      }
+      await Db.salvaImpostazione('correzioni:' + g.id, correzioni);
       const daTenere = new Set(remoti.map((v) => v.id));
       for (const id of locali.keys()) {
         if (!daTenere.has(id)) {
@@ -284,6 +311,64 @@ const Gruppi = {
       await Db.salvaImpostazione('scalette:' + g.id, await this.scalette(g.id));
     }
     return cambiato;
+  },
+
+  // ---- Messaggi privati (versione Coro): li vedono solo chi scrive e chi riceve ----
+  async messaggiPrivati(gruppoId) {
+    const [righe, nascosti] = await Promise.all([
+      conMessaggio(Sync.client.from('messaggi_privati').select('*')
+        .eq('gruppo_id', gruppoId).order('creato', { ascending: false }).limit(500)),
+      this._daNascondere(),
+    ]);
+    return righe.filter((m) => !nascosti.persone.has(m.da) && !nascosti.canti.has(m.id)).reverse();
+  },
+  async scriviPrivato(gruppoId, a, testo) {
+    await conMessaggio(Sync.client.from('messaggi_privati').insert({ gruppo_id: gruppoId, da: Sync.utente.id, a, testo }));
+    Notifiche.invia(gruppoId, 'privato', testo, a);
+  },
+  eliminaPrivato: (id) => conMessaggio(Sync.client.from('messaggi_privati').delete().eq('id', id)),
+  segnaLetti: (gruppoId, persona) => Sync.client.rpc('segna_letti', { gruppo: gruppoId, persona }),
+  // Segnala un messaggio privato (se ne salva una copia per chi controlla le segnalazioni)
+  async segnalaPrivato(m, autore, motivo) {
+    await conMessaggio(Sync.client.from('segnalazioni').insert({
+      gruppo_id: m.gruppo_id, segnalato_user_id: m.da, autore, titolo: 'Messaggio privato', messaggio: m.testo, motivo,
+    }));
+    const segnalati = (await Db.impostazione('segnalatiDaMe')) || [];
+    await Db.salvaImpostazione('segnalatiDaMe', [...segnalati, m.id]);
+  },
+  // Quanti messaggi privati non ho ancora letto, per gruppo
+  async privatiNonLetti() {
+    const { data, error } = await Sync.client.from('messaggi_privati').select('id,gruppo_id,da')
+      .eq('a', Sync.utente.id).is('letto', null);
+    if (error) return {};
+    const nascosti = await this._daNascondere();
+    const conteggi = {};
+    for (const m of data) {
+      if (nascosti.persone.has(m.da) || nascosti.canti.has(m.id)) continue;
+      conteggi[m.gruppo_id] = (conteggi[m.gruppo_id] || 0) + 1;
+    }
+    return conteggi;
+  },
+
+  // ---- Correzioni del direttore sugli spartiti del libretto (il PDF originale non cambia) ----
+  async correzioni(gruppoId) {
+    const { data, error } = await Sync.client.from('correzioni').select('libretto_id,allegato_id,segni').eq('gruppo_id', gruppoId);
+    return error ? [] : data;
+  },
+  async correzioniDi(librettoId) {
+    const { data, error } = await Sync.client.from('correzioni').select('allegato_id,segni').eq('libretto_id', librettoId);
+    if (error) return null;
+    return Object.fromEntries(data.map((c) => [c.allegato_id, c.segni || []]));
+  },
+  salvaCorrezioni: (gruppoId, librettoId, allegatoId, segni) =>
+    conMessaggio(Sync.client.from('correzioni').upsert({ gruppo_id: gruppoId, libretto_id: librettoId, allegato_id: allegatoId, segni })),
+  // Le correzioni "in diretta" mentre si guarda un canto: quandoCambia(riga) a ogni modifica
+  ascoltaCorrezioni(librettoId, quandoCambia) {
+    const canale = Sync.client.channel('correzioni-' + librettoId)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'correzioni', filter: `libretto_id=eq.${librettoId}` },
+        (cambio) => quandoCambia(cambio.new && cambio.new.allegato_id ? cambio.new : null))
+      .subscribe();
+    return () => Sync.client.removeChannel(canale);
   },
 
   // Manda un canto nel gruppo: prima carico i file, poi il messaggio.
@@ -366,6 +451,8 @@ const Gruppi = {
         () => quandoCambia())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'avvisi', filter: `gruppo_id=eq.${gruppoId}` },
         () => quandoCambia())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messaggi_privati', filter: `a=eq.${Sync.utente.id}` },
+        () => quandoCambia())
       .subscribe();
     return () => Sync.client.removeChannel(canale);
   },
@@ -389,7 +476,7 @@ const Gruppi = {
     const { data: avvisi } = await Sync.client.from('avvisi').select('id,gruppo_id,user_id,creato')
       .neq('user_id', Sync.utente.id).gt('creato', piuVecchio);
     righe.push(...(avvisi || []));
-    const conteggi = {};
+    const conteggi = await this.privatiNonLetti();
     for (const r of righe) {
       if (nascosti.persone.has(r.user_id) || nascosti.canti.has(r.id)) continue;
       if (visti[r.gruppo_id] && new Date(r.creato) > new Date(visti[r.gruppo_id])) {

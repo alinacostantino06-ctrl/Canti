@@ -87,9 +87,10 @@ const Notifiche = {
 
   // Chiede di avvisare gli altri membri del gruppo. Non blocca mai l'app: se non riesce, pazienza.
   //   tipo: "avviso" | "canto" | "scaletta" | "libretto"
-  invia(gruppoId, tipo, testo) {
+  // a: per i messaggi privati, la persona a cui arriva la notifica
+  invia(gruppoId, tipo, testo, a) {
     if (!Sync.client || !Sync.utente || !navigator.onLine) return;
-    Sync.client.functions.invoke('notifica', { body: { gruppo_id: gruppoId, tipo, testo } })
+    Sync.client.functions.invoke('notifica', { body: { gruppo_id: gruppoId, tipo, testo, a } })
       .catch((err) => console.warn('Notifica non inviata:', err));
   },
 };

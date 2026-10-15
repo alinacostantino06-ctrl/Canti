@@ -1,7 +1,7 @@
 // Edge Function "notifica" di "Canta con noi".
 //
 // La chiama l'app quando in un gruppo succede qualcosa (avviso in bacheca, canto condiviso,
-// scaletta nuova, canto aggiunto al libretto): manda una notifica a tutti gli altri
+// scaletta nuova, canto aggiunto al libretto, messaggio privato): manda una notifica a tutti gli altri
 // membri del gruppo che hanno attivato le notifiche sul loro dispositivo.
 //
 // Come metterla in Supabase: Edge Functions → Deploy a new function → Via Editor →
@@ -23,9 +23,10 @@ const TITOLI: Record<string, string> = {
   canto: '♪ Nuovo canto condiviso:',
   scaletta: '📅 Nuova scaletta:',
   libretto: '📖 Nel libretto:',
+  privato: '✉',
 };
 // In quale scheda del gruppo si apre l'app toccando la notifica
-const SCHEDE: Record<string, string> = { avviso: 'bacheca', canto: 'chat', scaletta: 'scalette', libretto: 'libretto' };
+const SCHEDE: Record<string, string> = { avviso: 'bacheca', canto: 'chat', scaletta: 'scalette', libretto: 'libretto', privato: 'messaggi' };
 
 function risposta(dati: unknown, stato = 200) {
   return new Response(JSON.stringify(dati), { status: stato, headers: { ...CORS, 'Content-Type': 'application/json' } });
@@ -42,19 +43,25 @@ Deno.serve(async (req) => {
     const { data: { user } } = await admin.auth.getUser(token);
     if (!user) return risposta({ errore: "Serve l'accesso" }, 401);
 
-    const { gruppo_id, tipo, testo } = await req.json();
+    const { gruppo_id, tipo, testo, a } = await req.json();
     if (!gruppo_id || !TITOLI[tipo]) return risposta({ errore: 'Richiesta non valida' }, 400);
 
     // Deve essere nel gruppo; per gli avvisi deve essere direttore
     const { data: gruppo } = await admin.from('gruppi').select('nome, creato_da').eq('id', gruppo_id).single();
-    const { data: io } = await admin.from('membri').select('ruolo').eq('gruppo_id', gruppo_id).eq('user_id', user.id).maybeSingle();
+    const { data: io } = await admin.from('membri').select('ruolo, nome').eq('gruppo_id', gruppo_id).eq('user_id', user.id).maybeSingle();
     if (!gruppo || !io) return risposta({ errore: 'Non fai parte del gruppo' }, 403);
     if (tipo === 'avviso' && io.ruolo !== 'direttore' && gruppo.creato_da !== user.id) {
       return risposta({ errore: 'Solo i direttori scrivono in bacheca' }, 403);
     }
 
+    // Messaggio privato: va solo alla persona a cui è scritto (che deve essere nel gruppo)
+    let query = admin.from('membri').select('user_id').eq('gruppo_id', gruppo_id).neq('user_id', user.id);
+    if (tipo === 'privato') {
+      if (!a) return risposta({ errore: 'Manca il destinatario' }, 400);
+      query = query.eq('user_id', a);
+    }
     // Destinatari: gli altri membri, tranne chi ha bloccato chi manda
-    const { data: membri } = await admin.from('membri').select('user_id').eq('gruppo_id', gruppo_id).neq('user_id', user.id);
+    const { data: membri } = await query;
     const { data: bloccanti } = await admin.from('bloccati').select('user_id').eq('bloccato_id', user.id);
     const esclusi = new Set((bloccanti ?? []).map((b) => b.user_id));
     const destinatari = (membri ?? []).map((m) => m.user_id).filter((id) => !esclusi.has(id));
@@ -66,9 +73,10 @@ Deno.serve(async (req) => {
     webpush.setVapidDetails(Deno.env.get('VAPID_SUBJECT')!, Deno.env.get('VAPID_PUBLIC_KEY')!, Deno.env.get('VAPID_PRIVATE_KEY')!);
     const messaggio = JSON.stringify({
       titolo: gruppo.nome,
-      testo: TITOLI[tipo] + ' ' + String(testo ?? '').slice(0, 200),
+      testo: TITOLI[tipo] + ' ' + (tipo === 'privato' ? (io.nome || 'Qualcuno') + ': ' : '') + String(testo ?? '').slice(0, 200),
       gruppo: gruppo_id,
       scheda: SCHEDE[tipo],
+      con: tipo === 'privato' ? user.id : undefined, // chi ha scritto: si apre la sua conversazione
     });
 
     let inviate = 0;

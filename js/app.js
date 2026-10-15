@@ -47,6 +47,7 @@ function mostra(nome, titoloBarra, conIndietro) {
     document.body.classList.remove('con-alfabeto');
   }
   if (nome !== 'canto' && nome !== 'scaletta') percorsoScaletta = null;
+  if (nome !== 'canto') fermaCorrezioni();
   for (const [chiave, el] of Object.entries(schermate)) el.hidden = chiave !== nome;
   titolo.textContent = titoloBarra;
   btnIndietro.hidden = !conIndietro;
@@ -534,6 +535,7 @@ async function mostraCanto(id) {
   document.querySelector('.comandi-fondo').hidden = delLibretto;
 
   disegnaTesto(canto.testo);
+  await preparaCorrezioni(delLibretto ? canto : null);
   mostraAllegati();
   aggiornaNavScaletta(id);
 }
@@ -574,7 +576,7 @@ async function mostraAllegati() {
   const canto = await Db.canto(cantoCorrente);
   const delLibretto = !!(canto && canto.libretto);
   const voce = await voceDaUsare(canto);
-  const laMiaVoce = (a) => !!voce && a.tipo === 'audio' && a.nome.toLowerCase().includes(voce);
+  const laMiaVoce = (a) => !!voce && (a.voce ? a.voce === voce : a.tipo === 'audio' && a.nome.toLowerCase().includes(voce));
   const lista = (await Db.allegati(cantoCorrente)).sort((x, y) => laMiaVoce(y) - laMiaVoce(x));
 
   for (const a of lista) {
@@ -593,7 +595,8 @@ async function mostraAllegati() {
       link.target = '_blank';
       riga.append(link);
     } else {
-      riga.append(crea('span', 'allegato-nome', `${ICONA_FILE[a.tipo] || '🎵'} ${a.nome}` + (laMiaVoce(a) ? ' · 🎤 la tua voce' : '')));
+      riga.append(crea('span', 'allegato-nome', `${ICONA_FILE[a.tipo] || '🎵'} ${a.nome}` +
+        (laMiaVoce(a) ? ' · 🎤 la tua voce' : a.voce ? ' · 🎤 ' + (VOCI[a.voce] || a.voce) : '')));
     }
 
     const rinomina = crea('button', 'btn-mini', '✎');
@@ -659,10 +662,17 @@ async function disegnaSpartiti() {
       const url = URL.createObjectURL(new Blob([a.dati], { type: a.mime }));
       indirizziFile.push(url);
       const img = crea('img');
-      img.src = url;
       img.alt = 'Spartito: ' + a.nome;
       img.style.width = larghezza + 'px';
-      blocco.append(img);
+      const foglio = foglioPerPagina(a.id, 1, img);
+      img.onload = () => {
+        const strato = foglio.querySelector('.strato-correzioni');
+        strato.width = Math.floor(larghezza * densita);
+        strato.height = Math.floor(larghezza * densita * img.naturalHeight / img.naturalWidth);
+        disegnaStrato(foglio);
+      };
+      img.src = url;
+      blocco.append(foglio);
       continue;
     }
 
@@ -680,10 +690,13 @@ async function disegnaSpartiti() {
         tela.height = Math.floor(vista.height);
         tela.style.width = larghezza + 'px';
         tela.setAttribute('aria-label', `Spartito: ${a.nome}, pagina ${n}`);
-        blocco.append(tela);
+        const foglio = foglioPerPagina(a.id, n, tela, tela.width, tela.height);
+        blocco.append(foglio);
+        disegnaStrato(foglio);
         await pagina.render({ canvasContext: tela.getContext('2d'), viewport: vista }).promise;
       }
       pdf.destroy();
+      aggiornaComandiCorrezioni();
     } catch (err) {
       console.error(err);
       blocco.append(crea('p', 'dettaglio', `Non è stato possibile mostrare lo spartito «${a.nome}».`));
@@ -698,6 +711,353 @@ function ridisegnaSpartiti() {
   clearTimeout(timerSpartiti);
   timerSpartiti = setTimeout(disegnaSpartiti, 250);
 }
+
+// ---------- Correzioni del direttore sopra lo spartito ----------
+// Il direttore può scrivere sopra i PDF e le foto dei canti del libretto (penna, evidenziatore,
+// parole). Il file originale non viene mai cambiato: le correzioni sono un "foglio trasparente"
+// appoggiato sopra, salvato a parte. Tutto il coro le vede in diretta, e con «Vedi l'originale»
+// si può togliere il foglio trasparente.
+
+let correzioni = null;        // { gruppo, libretto, perAllegato: { [id del file]: [segni] } } del canto aperto
+let modoCorrezione = false;
+let strumento = { tipo: 'penna', colore: '#d0021b' };
+let tratto = null;            // il tratto che si sta disegnando adesso
+let smettiCorrezioni = null;  // per smettere di ascoltare le correzioni in diretta
+let cronologiaCorrezioni = []; // per «annulla»
+let correzioniCambiate = false;
+const salvataggiCorrezioni = new Map(); // id del file → timer
+const GRANDEZZE = { penna: 0.004, evidenziatore: 0.022, testo: 0.035 }; // in proporzione alla larghezza della pagina
+
+const copia = (x) => JSON.parse(JSON.stringify(x));
+const ciSonoCorrezioni = () => !!correzioni && Object.values(correzioni.perAllegato).some((s) => s && s.length);
+
+// Prepara le correzioni del canto del libretto appena aperto
+async function preparaCorrezioni(canto) {
+  fermaCorrezioni();
+  correzioni = null;
+  $('comandi-correzioni').hidden = true;
+  spartitiCanto.classList.remove('senza-correzioni');
+  if (!canto || !canto.libretto) return;
+  const gid = canto.libretto.gruppo;
+  const lid = canto.id;
+  const salvate = ((await Db.impostazione('correzioni:' + gid)) || {})[lid] || {};
+  if (cantoCorrente !== lid) return;
+  correzioni = { gruppo: gid, libretto: lid, perAllegato: copia(salvate) };
+  aggiornaComandiCorrezioni();
+  disegnaStrati();
+
+  if (!Gruppi.disponibili() || !navigator.onLine) return;
+  // le ultime correzioni (se nel frattempo il direttore ha scritto qualcosa)...
+  Gruppi.correzioniDi(lid).then((fresche) => {
+    if (fresche && correzioni && correzioni.libretto === lid && !modoCorrezione) {
+      correzioni.perAllegato = fresche;
+      ricordaCorrezioni();
+      aggiornaComandiCorrezioni();
+      disegnaStrati();
+    }
+  });
+  // ...e quelle che arrivano mentre si guarda il canto
+  try {
+    smettiCorrezioni = Gruppi.ascoltaCorrezioni(lid, (riga) => {
+      if (!riga || !correzioni || correzioni.libretto !== lid || modoCorrezione) return;
+      correzioni.perAllegato[riga.allegato_id] = riga.segni || [];
+      ricordaCorrezioni();
+      aggiornaComandiCorrezioni();
+      disegnaStrati();
+    });
+  } catch (e) { /* va bene lo stesso: le vedrà alla prossima apertura */ }
+}
+
+// Quando si lascia il canto
+function fermaCorrezioni() {
+  if (modoCorrezione) fineCorrezioni();
+  if (smettiCorrezioni) {
+    try { smettiCorrezioni(); } catch (e) { /* niente */ }
+    smettiCorrezioni = null;
+  }
+}
+
+// Salvo sul dispositivo le correzioni del canto (per vederle anche senza internet)
+async function ricordaCorrezioni() {
+  if (!correzioni) return;
+  const chiave = 'correzioni:' + correzioni.gruppo;
+  const tutte = (await Db.impostazione(chiave)) || {};
+  tutte[correzioni.libretto] = copia(correzioni.perAllegato);
+  await Db.salvaImpostazione(chiave, tutte);
+}
+
+async function sonoDirettoreDel(gruppoId) {
+  const info = (await Db.impostazione('coro:' + gruppoId)) || {};
+  return info.ruolo === 'direttore' && info.attivo !== false;
+}
+
+async function aggiornaComandiCorrezioni() {
+  const c = correzioni;
+  const haSpartiti = !!spartitiCanto.querySelector('.pagina-spartito') ||
+    (cantoCorrente && (await Db.allegati(cantoCorrente)).some((a) => a.tipo === 'spartito' || a.tipo === 'pdf'));
+  if (c !== correzioni) return;
+  const direttore = !!c && haSpartiti && (await sonoDirettoreDel(c.gruppo));
+  $('btn-correggi').hidden = !direttore || modoCorrezione;
+  $('btn-originale').hidden = !c || !ciSonoCorrezioni() || modoCorrezione;
+  $('btn-originale').textContent = spartitiCanto.classList.contains('senza-correzioni')
+    ? '✏️ Vedi le correzioni' : "👁 Vedi l'originale";
+  $('comandi-correzioni').hidden = $('btn-correggi').hidden && $('btn-originale').hidden;
+}
+
+// ---- Disegno ----
+function disegnaSegno(ctx, s, W, H) {
+  if (s.tipo === 'testo') {
+    ctx.fillStyle = s.c;
+    ctx.font = `700 ${Math.max(8, s.d * W)}px system-ui, sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s.testo, s.x * W, s.y * H);
+    return;
+  }
+  if (!s.t || !s.t.length) return;
+  ctx.save();
+  ctx.strokeStyle = s.c;
+  ctx.lineWidth = Math.max(1, s.d * W);
+  ctx.lineCap = s.tipo === 'evidenziatore' ? 'butt' : 'round';
+  ctx.lineJoin = 'round';
+  if (s.tipo === 'evidenziatore') ctx.globalAlpha = 0.35;
+  ctx.beginPath();
+  s.t.forEach(([x, y], i) => (i ? ctx.lineTo(x * W, y * H) : ctx.moveTo(x * W, y * H)));
+  if (s.t.length === 1) ctx.lineTo(s.t[0][0] * W + 0.5, s.t[0][1] * H + 0.5); // un puntino
+  ctx.stroke();
+  ctx.restore();
+}
+
+function disegnaStrato(foglio) {
+  const strato = foglio.querySelector('.strato-correzioni');
+  if (!strato || !strato.width) return;
+  const ctx = strato.getContext('2d');
+  ctx.clearRect(0, 0, strato.width, strato.height);
+  const pagina = Number(foglio.dataset.pagina);
+  const segni = (correzioni && correzioni.perAllegato[foglio.dataset.allegato]) || [];
+  for (const s of segni) if (s.p === pagina) disegnaSegno(ctx, s, strato.width, strato.height);
+  if (tratto && tratto.foglio === foglio && tratto.segno) disegnaSegno(ctx, tratto.segno, strato.width, strato.height);
+}
+
+function disegnaStrati(allegatoId = null) {
+  spartitiCanto.querySelectorAll('.pagina-spartito').forEach((f) => {
+    if (!allegatoId || f.dataset.allegato === allegatoId) disegnaStrato(f);
+  });
+}
+
+// Avvolge una pagina dello spartito (canvas o foto) con il suo foglio trasparente
+function foglioPerPagina(allegatoId, pagina, elemento, larghezzaPx, altezzaPx) {
+  const foglio = crea('div', 'pagina-spartito');
+  foglio.dataset.allegato = allegatoId;
+  foglio.dataset.pagina = pagina;
+  const strato = crea('canvas', 'strato-correzioni');
+  strato.setAttribute('aria-hidden', 'true');
+  if (larghezzaPx) {
+    strato.width = larghezzaPx;
+    strato.height = altezzaPx;
+  }
+  foglio.append(elemento, strato);
+  return foglio;
+}
+
+// ---- Scrivere ----
+function posizioneSu(strato, e) {
+  const r = strato.getBoundingClientRect();
+  const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  const y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+  return [Math.round(x * 10000) / 10000, Math.round(y * 10000) / 10000];
+}
+
+// Cambia i segni di un file: si può annullare, si ridisegna e si salva (subito per tutto il coro)
+function cambiaSegni(allegatoId, nuovi) {
+  cronologiaCorrezioni.push(copia(correzioni.perAllegato));
+  if (cronologiaCorrezioni.length > 50) cronologiaCorrezioni.shift();
+  correzioni.perAllegato[allegatoId] = nuovi;
+  correzioniCambiate = true;
+  disegnaStrati(allegatoId);
+  salvaCorrezioniPresto(allegatoId);
+}
+
+function salvaCorrezioniPresto(allegatoId) {
+  const c = correzioni;
+  scriviStatoCorrezioni('Salvo…');
+  clearTimeout(salvataggiCorrezioni.get(allegatoId));
+  salvataggiCorrezioni.set(allegatoId, setTimeout(async () => {
+    salvataggiCorrezioni.delete(allegatoId);
+    try {
+      await Gruppi.salvaCorrezioni(c.gruppo, c.libretto, allegatoId, c.perAllegato[allegatoId] || []);
+      if (!salvataggiCorrezioni.size) scriviStatoCorrezioni('✓ Il coro le vede');
+    } catch (err) {
+      scriviStatoCorrezioni(navigator.onLine ? '⚠ Non salvate' : '📴 Serve internet');
+      avviso('⚠ ' + (navigator.onLine ? err.message : 'Senza internet le correzioni non arrivano al coro.'));
+    }
+    ricordaCorrezioni();
+  }, 500));
+}
+
+function scriviStatoCorrezioni(testo) { $('stato-correzioni').textContent = testo; }
+
+// Gomma: toglie i segni vicini al dito
+function cancellaVicino(foglio, [x, y]) {
+  const strato = foglio.querySelector('.strato-correzioni');
+  const W = strato.width;
+  const H = strato.height;
+  const raggio = 0.025 * W;
+  const pagina = Number(foglio.dataset.pagina);
+  const id = foglio.dataset.allegato;
+  const segni = correzioni.perAllegato[id] || [];
+  const vicino = (s) => {
+    if (s.p !== pagina) return false;
+    if (s.tipo === 'testo') {
+      const larghezzaTesto = s.testo.length * s.d * W * 0.6;
+      return x * W >= s.x * W - raggio && x * W <= s.x * W + larghezzaTesto + raggio && Math.abs(y * H - s.y * H) <= s.d * W;
+    }
+    return s.t.some(([sx, sy]) => Math.hypot((sx - x) * W, (sy - y) * H) <= raggio + s.d * W / 2);
+  };
+  if (segni.some(vicino)) cambiaSegni(id, segni.filter((s) => !vicino(s)));
+}
+
+async function scriviParola(foglio, [x, y]) {
+  const testo = await chiediNome('Cosa vuoi scrivere sullo spartito? (es. «più piano», «respiro», «rit.»)');
+  if (!testo || !correzioni) return;
+  const id = foglio.dataset.allegato;
+  cambiaSegni(id, [...(correzioni.perAllegato[id] || []),
+    { tipo: 'testo', p: Number(foglio.dataset.pagina), c: strumento.colore, d: GRANDEZZE.testo, x, y, testo: testo.slice(0, 80) }]);
+}
+
+spartitiCanto.addEventListener('pointerdown', (e) => {
+  if (!modoCorrezione || tratto) return;
+  const strato = e.target.closest('.strato-correzioni');
+  if (!strato) return;
+  e.preventDefault();
+  const foglio = strato.parentElement;
+  const pos = posizioneSu(strato, e);
+  if (strumento.tipo === 'testo') return scriviParola(foglio, pos);
+  try { strato.setPointerCapture(e.pointerId); } catch (err) { /* va bene lo stesso */ }
+  if (strumento.tipo === 'gomma') {
+    tratto = { foglio, gomma: true, id: e.pointerId };
+    cancellaVicino(foglio, pos);
+    return;
+  }
+  tratto = {
+    foglio, id: e.pointerId,
+    segno: { tipo: strumento.tipo, p: Number(foglio.dataset.pagina), c: strumento.colore, d: GRANDEZZE[strumento.tipo], t: [pos] },
+  };
+  disegnaStrato(foglio);
+});
+spartitiCanto.addEventListener('pointermove', (e) => {
+  if (!tratto || e.pointerId !== tratto.id) return;
+  e.preventDefault();
+  const strato = tratto.foglio.querySelector('.strato-correzioni');
+  const pos = posizioneSu(strato, e);
+  if (tratto.gomma) return cancellaVicino(tratto.foglio, pos);
+  const ultimo = tratto.segno.t[tratto.segno.t.length - 1];
+  if (Math.hypot(pos[0] - ultimo[0], pos[1] - ultimo[1]) < 0.002) return;
+  tratto.segno.t.push(pos);
+  disegnaStrato(tratto.foglio);
+});
+function fineTratto(e) {
+  if (!tratto || e.pointerId !== tratto.id) return;
+  const { foglio, segno } = tratto;
+  tratto = null;
+  if (segno && correzioni) cambiaSegni(foglio.dataset.allegato, [...(correzioni.perAllegato[foglio.dataset.allegato] || []), segno]);
+}
+spartitiCanto.addEventListener('pointerup', fineTratto);
+spartitiCanto.addEventListener('pointercancel', fineTratto);
+// due dita (per ingrandire): il tratto appena iniziato non vale
+spartitiCanto.addEventListener('touchstart', (e) => {
+  if (tratto && e.touches.length > 1) {
+    const foglio = tratto.foglio;
+    tratto = null;
+    disegnaStrato(foglio);
+  }
+});
+
+// ---- Pulsanti ----
+function scegliStrumento(btn) {
+  document.querySelectorAll('#barra-correzioni [data-strumento]').forEach((b) => b.classList.toggle('attivo', b === btn));
+  strumento = { tipo: btn.dataset.strumento, colore: btn.dataset.colore || strumento.colore };
+  spartitiCanto.classList.toggle('mano', strumento.tipo === 'mano');
+}
+document.querySelectorAll('#barra-correzioni [data-strumento]').forEach((b) =>
+  b.addEventListener('click', () => scegliStrumento(b)));
+
+$('btn-correggi').addEventListener('click', async () => {
+  if (!correzioni) return;
+  if (!navigator.onLine) return avviso('📴 Per correggere lo spartito serve internet: le correzioni arrivano subito a tutto il coro.');
+  modoCorrezione = true;
+  correzioniCambiate = false;
+  cronologiaCorrezioni = [];
+  spartitiCanto.classList.remove('senza-correzioni');
+  spartitiCanto.classList.add('modo-correzione');
+  document.body.classList.add('correggendo');
+  scegliStrumento(document.querySelector('#barra-correzioni [data-strumento]'));
+  $('barra-correzioni').hidden = false;
+  scriviStatoCorrezioni('Scrivi con il dito · ✋ per scorrere');
+  aggiornaComandiCorrezioni();
+  disegnaStrati();
+  const primo = spartitiCanto.querySelector('.pagina-spartito');
+  if (primo && primo.getBoundingClientRect().top > window.innerHeight * 0.6) primo.scrollIntoView({ behavior: 'smooth' });
+});
+
+function fineCorrezioni() {
+  modoCorrezione = false;
+  tratto = null;
+  spartitiCanto.classList.remove('modo-correzione', 'mano');
+  document.body.classList.remove('correggendo');
+  $('barra-correzioni').hidden = true;
+  // quello che non è ancora partito, parte adesso
+  for (const [id, timer] of salvataggiCorrezioni) {
+    clearTimeout(timer);
+    salvataggiCorrezioni.delete(id);
+    const c = correzioni;
+    if (c) Gruppi.salvaCorrezioni(c.gruppo, c.libretto, id, c.perAllegato[id] || [])
+      .catch(() => avviso('⚠ Alcune correzioni non sono state salvate: serve internet.'));
+  }
+  if (correzioniCambiate && correzioni) {
+    ricordaCorrezioni();
+    Db.canto(correzioni.libretto).then((canto) => {
+      if (canto) Notifiche.invia(correzioni.gruppo, 'libretto', '✏️ corretto lo spartito di «' + canto.titolo + '»');
+    });
+  }
+  correzioniCambiate = false;
+  aggiornaComandiCorrezioni();
+}
+$('btn-fine-correzioni').addEventListener('click', () => {
+  const cambiate = correzioniCambiate;
+  fineCorrezioni();
+  if (cambiate) avviso('Correzioni salvate: tutto il coro le vede. Il PDF originale resta com\'era.');
+});
+
+$('btn-annulla-segno').addEventListener('click', () => {
+  if (!cronologiaCorrezioni.length) return avviso('Niente da annullare.');
+  const prima = cronologiaCorrezioni.pop();
+  const ids = new Set([...Object.keys(prima), ...Object.keys(correzioni.perAllegato)]);
+  for (const id of ids) {
+    if (JSON.stringify(prima[id] || []) !== JSON.stringify(correzioni.perAllegato[id] || [])) salvaCorrezioniPresto(id);
+  }
+  correzioni.perAllegato = prima;
+  correzioniCambiate = true;
+  disegnaStrati();
+});
+
+$('btn-togli-correzioni').addEventListener('click', async () => {
+  if (!ciSonoCorrezioni()) return avviso('Su questo spartito non ci sono correzioni.');
+  const scelta = await chiediScelta('Togliere tutte le correzioni da questo canto?\n\nLo spartito tornerà come l\'originale per tutto il coro.',
+    [{ valore: 'si', testo: 'Togli tutte le correzioni', pericolo: true }]);
+  if (!scelta) return;
+  cronologiaCorrezioni.push(copia(correzioni.perAllegato));
+  for (const id of Object.keys(correzioni.perAllegato)) {
+    correzioni.perAllegato[id] = [];
+    salvaCorrezioniPresto(id);
+  }
+  correzioniCambiate = true;
+  disegnaStrati();
+});
+
+$('btn-originale').addEventListener('click', () => {
+  spartitiCanto.classList.toggle('senza-correzioni');
+  aggiornaComandiCorrezioni();
+});
 
 // Un PDF allegato (caricato come testo) diventa uno spartito
 async function trasformaInSpartito(allegato) {
@@ -1455,6 +1815,8 @@ async function apriChat(g) {
   $('chat-vuota').hidden = true;
   $('coro-stato').hidden = true;
   $('schede-coro').hidden = true;
+  $('pallino-messaggi').hidden = true;
+  conversazioneCon = null;
   scegliScheda('chat');
   await preparaCoro(g);
   if (Gruppi.coroAttivo(g)) scegliScheda(schedaRichiesta || 'bacheca');
@@ -1469,6 +1831,8 @@ async function caricaChat(vaiInFondo = false) {
   const g = gruppoCorrente;
   if (!g || schermate.chat.hidden) return;
   if (!$('pannello-bacheca').hidden) mostraBacheca();
+  if (!$('pannello-messaggi').hidden) mostraMessaggi();
+  else if (Gruppi.coroAttivo(g)) controllaMessaggiNuovi(g);
   const mio = ++caricamentoChat;
   const nota = $('chat-avviso');
   try {
@@ -1764,7 +2128,7 @@ $('btn-membri').addEventListener('click', async () => {
   if (!scelta) return;
 
   if (scelta === 'voce') {
-    const voce = await chiediScelta('Che voce canti? Negli audio dei canti vedrai per primi quelli della tua voce.',
+    const voce = await chiediScelta('Che voce canti? Dal libretto riceverai solo i file della tua voce (e quelli per tutti); negli audio vedrai per primi i tuoi.',
       [...Object.entries(VOCI).map(([valore, testo]) => ({ valore, testo: '🎤 ' + testo })), { valore: 'nessuna', testo: 'Nessuna in particolare' }]);
     if (!voce) return;
     const nuova = voce === 'nessuna' ? '' : voce;
@@ -1774,7 +2138,8 @@ $('btn-membri').addEventListener('click', async () => {
       const info = (await Db.impostazione('coro:' + g.id)) || {};
       await Db.salvaImpostazione('coro:' + g.id, { ...info, voce: nuova });
       g.miaVoce = nuova;
-      avviso(nuova ? 'La tua voce: ' + VOCI[nuova] + '.' : 'Voce tolta.');
+      avviso(nuova ? 'La tua voce: ' + VOCI[nuova] + '. Aggiorno il libretto…' : 'Voce tolta: riceverai tutti i file.');
+      aggiornaLibrettiOra();
     } catch (err) {
       avviso('⚠ ' + err.message);
     }
@@ -1945,7 +2310,8 @@ async function preparaCoro(g) {
       });
       stato.append(prova);
     } else {
-      stato.append(crea('p', 'dettaglio', 'La versione Coro non è attiva in questo gruppo.'));
+      stato.append(crea('p', 'dettaglio', 'La prova gratuita si può usare una volta sola e l\'hai già usata in un altro gruppo. ' +
+        'Per avere la versione Coro anche qui, la parrocchia deve attivare l\'abbonamento: scrivi a commissionilumart@gmail.com.'));
     }
     stato.hidden = false;
   }
@@ -2039,6 +2405,9 @@ function scegliScheda(nome) {
   $('pannello-chat').hidden = nome !== 'chat';
   $('pannello-libretto').hidden = nome !== 'libretto';
   $('pannello-scalette').hidden = nome !== 'scalette';
+  $('pannello-messaggi').hidden = nome !== 'messaggi';
+  if (nome !== 'messaggi') conversazioneCon = null;
+  if (nome === 'messaggi') mostraMessaggi(true);
   if (nome === 'bacheca') mostraBacheca(true);
   if (nome === 'libretto') mostraLibretto();
   if (nome === 'scalette') mostraScalette();
@@ -2067,7 +2436,8 @@ async function mostraLibretto() {
     const files = v.allegati || [];
     const dettagli = [];
     if (files.some((f) => f.tipo === 'audio')) dettagli.push('🎵');
-    if (files.some((f) => f.tipo === 'spartito')) dettagli.push('🎼');
+    if (files.some((f) => f.tipo === 'spartito' || f.tipo === 'pdf')) dettagli.push('🎼');
+    if (riassuntoVoci(files)) dettagli.push(riassuntoVoci(files));
     const nome = crea('button', 'allegato-nome nome-libretto', '♪ ' + v.titolo);
     nome.append(crea('span', 'dettaglio', ' ' + dettagli.join(' ')));
     nome.addEventListener('click', () => apriDalLibretto(v.id));
@@ -2077,8 +2447,10 @@ async function mostraLibretto() {
         const aggiorna = crea('button', 'btn-mini', '↻');
         aggiorna.title = 'Aggiorna con la versione attuale del tuo canto';
         aggiorna.addEventListener('click', async () => {
+          const vociFile = await vociPerIlLibretto(v.canto_origine);
+          if (!vociFile) return;
           try {
-            await Gruppi.aggiornaNelLibretto(v, (t) => avviso(t));
+            await Gruppi.aggiornaNelLibretto(v, (t) => avviso(t), vociFile);
             avviso('«' + v.titolo + '» aggiornato per tutto il coro.');
             mostraLibretto();
             aggiornaLibrettiOra();
@@ -2087,6 +2459,23 @@ async function mostraLibretto() {
           }
         });
         riga.append(aggiorna);
+      }
+      if (files.length) {
+        const voci = crea('button', 'btn-mini', '🎤');
+        voci.title = 'Per quale voce è ogni file';
+        voci.addEventListener('click', async () => {
+          const scelte = await chiediVociFile(v.titolo, files, false);
+          if (!scelte) return;
+          try {
+            await Gruppi.impostaVociLibretto(v, scelte);
+            avviso('Fatto: ognuno riceverà i file della sua voce.');
+            mostraLibretto();
+            aggiornaLibrettiOra();
+          } catch (err) {
+            avviso('⚠ ' + err.message);
+          }
+        });
+        riga.append(voci);
       }
       const togli = crea('button', 'btn-mini', '🗑');
       togli.title = 'Togli dal libretto';
@@ -2114,8 +2503,10 @@ $('btn-aggiungi-libretto').addEventListener('click', async () => {
   const g = gruppoCorrente;
   const id = await scegliCanto();
   if (!id) return;
+  const vociFile = await vociPerIlLibretto(id);
+  if (!vociFile) return;
   try {
-    await Gruppi.aggiungiAlLibretto(g.id, id, (t) => avviso(t));
+    await Gruppi.aggiungiAlLibretto(g.id, id, (t) => avviso(t), vociFile);
     avviso('Canto aggiunto al libretto: arriverà a tutto il coro.');
     mostraLibretto();
     aggiornaLibrettiOra();
@@ -2132,6 +2523,262 @@ async function apriDalLibretto(id) {
   }
   if (!(await Db.canto(id))) return avviso('Questo canto non è ancora disponibile su questo dispositivo: serve internet.');
   mostraCanto(id);
+}
+
+// ---- File per voce (libretto) ----
+// Dal nome del file provo a capire per quale voce è: "Santo - soprano.mp3" → soprano
+function voceDalNome(nome) {
+  const n = semplifica(nome);
+  if (/sopran/.test(n)) return 'soprano';
+  if (/contralt|(^|[^a-z])alt[oi]?([^a-z]|$)/.test(n)) return 'contralto';
+  if (/tenor/.test(n)) return 'tenore';
+  if (/bass[oi]?([^a-z]|$)|baritono/.test(n)) return 'basso';
+  return '';
+}
+
+// Chiede al direttore per quale voce è ogni file. files: [{ id, nome, voce? }]
+// Restituisce { [id]: voce } (voce '' = per tutti), oppure null per "Annulla".
+function chiediVociFile(titoloCanto, files, daNome = true) {
+  const dialogo = $('dialogo-voci');
+  const ul = $('voci-file');
+  $('voci-domanda').textContent = 'Per chi è ogni file di «' + titoloCanto + '»?';
+  ul.innerHTML = '';
+  const tendine = [];
+  for (const f of files) {
+    const li = crea('li');
+    li.append(crea('span', 'nome-file', (ICONA_FILE[f.tipo] || '📄') + ' ' + f.nome));
+    const sel = crea('select');
+    sel.setAttribute('aria-label', 'Voce per ' + f.nome);
+    for (const [valore, testo] of [['', '👥 Per tutti'], ...Object.entries(VOCI).map(([v, t]) => [v, '🎤 Solo ' + t])]) {
+      const o = crea('option', '', testo);
+      o.value = valore;
+      sel.append(o);
+    }
+    sel.value = f.voce !== undefined && !daNome ? f.voce || '' : voceDalNome(f.nome);
+    tendine.push([f.id, sel]);
+    li.append(sel);
+    ul.append(li);
+  }
+  dialogo.showModal();
+  return new Promise((resolve) => {
+    const fine = (valore) => {
+      dialogo.onclose = null;
+      dialogo.oncancel = null;
+      resolve(valore);
+    };
+    dialogo.oncancel = (e) => {
+      e.preventDefault();
+      dialogo.close('annulla');
+    };
+    dialogo.onclose = () => fine(dialogo.returnValue === 'ok' ? Object.fromEntries(tendine.map(([id, s]) => [id, s.value])) : null);
+    dialogo.returnValue = '';
+  });
+}
+
+// Prima di mettere un canto nel libretto: per quale voce è ogni file?
+// Lo chiedo solo se ha più file o se dal nome sembra che un file sia per una voce.
+async function vociPerIlLibretto(cantoId) {
+  const canto = await Db.canto(cantoId);
+  const files = (await Db.allegati(cantoId)).filter((a) => a.dati);
+  if (files.length < 2 && !files.some((f) => voceDalNome(f.nome))) return {};
+  return chiediVociFile(canto ? canto.titolo : '', files);
+}
+
+// Le iniziali delle voci dei file di un canto del libretto: "🎤 S C T B"
+function riassuntoVoci(files) {
+  const voci = Object.keys(VOCI).filter((v) => files.some((f) => f.voce === v));
+  return voci.length ? '🎤 ' + voci.map((v) => VOCI[v][0]).join(' ') : '';
+}
+
+// ---- Messaggi privati ----
+let conversazioneCon = null;  // user_id della persona con cui si sta scrivendo
+let conversazioneRichiesta = null; // aperta toccando una notifica
+
+async function mostraMessaggi(vaiInFondo = false) {
+  const g = gruppoCorrente;
+  if (!g || $('pannello-messaggi').hidden) return;
+  let lista;
+  let membri;
+  try {
+    [lista, membri] = await Promise.all([Gruppi.messaggiPrivati(g.id), Gruppi.membri(g.id)]);
+  } catch (err) {
+    const ul = $('elenco-conversazioni');
+    ul.innerHTML = '';
+    ul.append(crea('li', 'dettaglio', navigator.onLine ? '⚠ ' + err.message : '📴 Senza internet i messaggi non si aggiornano.'));
+    return;
+  }
+  if (gruppoCorrente !== g || $('pannello-messaggi').hidden) return;
+  if (conversazioneRichiesta) {
+    conversazioneCon = conversazioneRichiesta;
+    conversazioneRichiesta = null;
+    vaiInFondo = true;
+  }
+  const altro = conversazioneCon && membri.find((m) => m.user_id === conversazioneCon);
+  if (conversazioneCon && !altro) conversazioneCon = null; // non è più nel gruppo
+  $('scegli-conversazione').hidden = !!conversazioneCon;
+  $('conversazione').hidden = !conversazioneCon;
+  if (conversazioneCon) disegnaConversazione(g, altro, lista, vaiInFondo);
+  else disegnaConversazioni(g, membri, lista);
+  aggiornaPallinoMessaggi(lista);
+}
+
+function aggiornaPallinoMessaggi(lista) {
+  $('pallino-messaggi').hidden = !lista.some((m) => m.a === Sync.utente.id && !m.letto);
+}
+
+// L'elenco delle persone del coro, con l'ultimo messaggio e quanti non ho letto
+function disegnaConversazioni(g, membri, lista) {
+  const io = Sync.utente.id;
+  const ul = $('elenco-conversazioni');
+  ul.innerHTML = '';
+  const altri = membri.filter((m) => m.user_id !== io).map((m) => {
+    const nostri = lista.filter((x) => (x.da === m.user_id && x.a === io) || (x.da === io && x.a === m.user_id));
+    return {
+      m,
+      ultimo: nostri[nostri.length - 1] || null,
+      nuovi: nostri.filter((x) => x.da === m.user_id && !x.letto).length,
+    };
+  });
+  altri.sort((x, y) => (y.ultimo ? Date.parse(y.ultimo.creato) : 0) - (x.ultimo ? Date.parse(x.ultimo.creato) : 0) ||
+    x.m.nome.localeCompare(y.m.nome, 'it'));
+  for (const { m, ultimo, nuovi } of altri) {
+    const btn = crea('button', 'conversazione-voce');
+    const riga = crea('span', 'riga-nome');
+    const direttore = m.ruolo === 'direttore' || m.user_id === g.creato_da;
+    riga.append(crea('strong', '', m.nome + (direttore ? ' ⭐' : '')));
+    if (m.voce) riga.append(crea('span', 'etichetta-voce', VOCI[m.voce] || m.voce));
+    if (nuovi) riga.append(crea('span', 'nuovi', nuovi === 1 ? '1 nuovo' : nuovi + ' nuovi'));
+    btn.append(riga);
+    btn.append(crea('span', 'anteprima', ultimo ? (ultimo.da === io ? 'Tu: ' : '') + ultimo.testo : 'Scrivi un messaggio'));
+    btn.addEventListener('click', () => {
+      conversazioneCon = m.user_id;
+      mostraMessaggi(true);
+    });
+    const li = crea('li');
+    li.append(btn);
+    ul.append(li);
+  }
+  $('conversazioni-vuote').hidden = altri.length > 0;
+}
+
+// La conversazione con una persona, come in un'app di messaggi
+function disegnaConversazione(g, altro, lista, vaiInFondo) {
+  const io = Sync.utente.id;
+  $('nome-conversazione').textContent = '✉️ ' + altro.nome;
+  const nostri = lista.filter((x) => (x.da === altro.user_id && x.a === io) || (x.da === io && x.a === altro.user_id));
+  const eraInFondo = vaiInFondo || window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+  const ul = $('elenco-privati');
+  ul.classList.add('privati');
+  ul.innerHTML = '';
+  let giornoPrecedente = '';
+  for (const x of nostri) {
+    const quando = new Date(x.creato);
+    const giorno = quando.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+    if (giorno !== giornoPrecedente) {
+      ul.append(crea('li', 'giorno-chat', giorno));
+      giornoPrecedente = giorno;
+    }
+    const mio = x.da === io;
+    const li = crea('li', 'messaggio' + (mio ? ' mio' : ''));
+    const testa = crea('div', 'autore', (mio ? 'Tu' : altro.nome) + ' · ' + formatoOra(quando));
+    if (mio && x.letto) testa.append(crea('span', 'letto', '✓✓ letto'));
+    const azioni = crea('button', 'btn-mini', mio ? '🗑' : '⋯');
+    azioni.title = mio ? 'Elimina il messaggio' : 'Segnala o blocca';
+    azioni.addEventListener('click', () => (mio ? eliminaPrivato(x) : azioniSuPrivato(x, altro)));
+    testa.append(azioni);
+    li.append(testa, crea('p', 'testo-messaggio', x.testo));
+    ul.append(li);
+  }
+  $('privati-vuoti').hidden = nostri.length > 0;
+  if (eraInFondo) window.scrollTo(0, document.body.scrollHeight);
+  // i messaggi che mi ha mandato ora li ho letti
+  if (nostri.some((x) => x.da === altro.user_id && !x.letto)) {
+    Gruppi.segnaLetti(g.id, altro.user_id).then(() => {
+      for (const x of nostri) if (x.da === altro.user_id) x.letto = x.letto || new Date().toISOString();
+      aggiornaPallinoMessaggi(lista);
+      aggiornaNovita(true);
+    });
+  }
+}
+
+async function eliminaPrivato(x) {
+  const scelta = await chiediScelta('Eliminare questo messaggio? Sparirà anche per l\'altra persona.',
+    [{ valore: 'si', testo: 'Elimina', pericolo: true }]);
+  if (!scelta) return;
+  try {
+    await Gruppi.eliminaPrivato(x.id);
+    mostraMessaggi();
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+}
+
+async function azioniSuPrivato(x, altro) {
+  const scelta = await chiediScelta('Messaggio di ' + altro.nome,
+    [{ valore: 'segnala', testo: '⚑ Segnala questo messaggio' }, { valore: 'blocca', testo: '🚫 Blocca ' + altro.nome, pericolo: true }]);
+  if (!scelta) return;
+  try {
+    if (scelta === 'segnala') {
+      const motivo = await chiediScelta('Perché lo segnali?', [
+        { valore: 'Contenuto offensivo o inappropriato', testo: 'Contenuto offensivo o inappropriato' },
+        { valore: 'Molestie', testo: 'Molestie' },
+        { valore: 'Spam o pubblicità', testo: 'Spam o pubblicità' },
+        { valore: 'Altro', testo: 'Altro' },
+      ]);
+      if (!motivo) return;
+      await Gruppi.segnalaPrivato(x, altro.nome, motivo);
+      avviso('Grazie: il messaggio è stato segnalato e non lo vedrai più.');
+    } else {
+      const conferma = await chiediScelta('Bloccare ' + altro.nome + '?\n\nNon vedrai più i suoi canti e i suoi messaggi, e non riceverai le sue notifiche. Puoi sbloccare quando vuoi da Account → Persone bloccate.',
+        [{ valore: 'si', testo: '🚫 Blocca ' + altro.nome, pericolo: true }]);
+      if (!conferma) return;
+      await Gruppi.blocca(altro.user_id, altro.nome);
+      conversazioneCon = null;
+      avviso(altro.nome + ' è bloccato.');
+    }
+    mostraMessaggi();
+  } catch (err) {
+    avviso('⚠ ' + err.message);
+  }
+}
+
+$('btn-chiudi-conversazione').addEventListener('click', () => {
+  conversazioneCon = null;
+  mostraMessaggi();
+  window.scrollTo(0, 0);
+});
+
+const testoPrivato = $('testo-privato');
+function adattaCasellaPrivato() {
+  testoPrivato.style.height = 'auto';
+  testoPrivato.style.height = Math.min(testoPrivato.scrollHeight, 160) + 'px';
+}
+testoPrivato.addEventListener('input', adattaCasellaPrivato);
+testoPrivato.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('scrivi-privato').requestSubmit();
+});
+$('scrivi-privato').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const testo = testoPrivato.value.trim();
+  if (!testo || !conversazioneCon || !gruppoCorrente) return;
+  const invia = e.target.querySelector('button');
+  invia.disabled = true;
+  try {
+    await Gruppi.scriviPrivato(gruppoCorrente.id, conversazioneCon, testo);
+    testoPrivato.value = '';
+    adattaCasellaPrivato();
+    await mostraMessaggi(true);
+  } catch (err) {
+    avviso('⚠ ' + (navigator.onLine ? err.message : 'Senza internet il messaggio non parte.'));
+  } finally {
+    invia.disabled = false;
+  }
+});
+
+// Il pallino sulla scheda "Messaggi" quando apro il gruppo
+async function controllaMessaggiNuovi(g) {
+  const nuovi = await Gruppi.privatiNonLetti().catch(() => ({}));
+  if (gruppoCorrente === g) $('pallino-messaggi').hidden = !nuovi[g.id];
 }
 
 // ---- Copia dei libretti sul dispositivo ----
@@ -2463,13 +3110,14 @@ $('btn-attiva-notifiche-gruppi').addEventListener('click', attivaNotifiche);
 
 // Apre un gruppo (nella scheda indicata) quando si tocca una sua notifica
 let schedaRichiesta = null;
-async function apriGruppoDaNotifica(gruppoId, scheda) {
+async function apriGruppoDaNotifica(gruppoId, scheda, con = null) {
   paginaIniziale.classList.add('senza-animazione', 'chiusa');
   if (!Gruppi.disponibili()) return mostraElenco();
   try {
     const g = (await Gruppi.miei()).find((x) => x.id === gruppoId);
     if (!g) return mostraGruppi();
     schedaRichiesta = scheda || 'bacheca';
+    conversazioneRichiesta = scheda === 'messaggi' ? con : null;
     await apriChat(g);
   } catch (err) {
     mostraGruppi();
@@ -2479,7 +3127,7 @@ async function apriGruppoDaNotifica(gruppoId, scheda) {
 // Se l'app è già aperta, il service worker ci manda un messaggio
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', (e) => {
-    if (e.data && e.data.tipo === 'apri-gruppo' && e.data.gruppo) apriGruppoDaNotifica(e.data.gruppo, e.data.scheda);
+    if (e.data && e.data.tipo === 'apri-gruppo' && e.data.gruppo) apriGruppoDaNotifica(e.data.gruppo, e.data.scheda, e.data.con);
   });
 }
 
@@ -2508,6 +3156,16 @@ function passoIndietro() {
       return true;
     }
     return false;
+  }
+  // mentre si corregge lo spartito: si finisce di correggere
+  if (modoCorrezione) {
+    $('btn-fine-correzioni').click();
+    return true;
+  }
+  // in una conversazione privata: si torna all'elenco delle persone
+  if (conversazioneCon && !schermate.chat.hidden && !$('pannello-messaggi').hidden) {
+    $('btn-chiudi-conversazione').click();
+    return true;
   }
   // dentro l'app: come la freccia ‹ in alto
   if (!btnIndietro.hidden) {
@@ -2682,7 +3340,7 @@ Db.svuotaCestino().finally(async () => {
   const daNotifica = new URLSearchParams(location.search);
   if (daNotifica.get('gruppo')) {
     history.replaceState(history.state, '', location.pathname);
-    await apriGruppoDaNotifica(daNotifica.get('gruppo'), daNotifica.get('scheda'));
+    await apriGruppoDaNotifica(daNotifica.get('gruppo'), daNotifica.get('scheda'), daNotifica.get('con'));
     return;
   }
   // se l'app era aperta da poco si riparte da dove si era, altrimenti dall'elenco dei canti

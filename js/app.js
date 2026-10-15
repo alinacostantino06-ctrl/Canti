@@ -50,6 +50,7 @@ function mostra(nome, titoloBarra, conIndietro) {
   if (nome !== 'canto') {
     fermaCorrezioni();
     cantoEsterno = null;
+    tornaAlLibretto = false;
   }
   for (const [chiave, el] of Object.entries(schermate)) el.hidden = chiave !== nome;
   titolo.textContent = titoloBarra;
@@ -177,7 +178,8 @@ async function mostraElenco() {
   const cercato = semplifica(ricerca.trim());
 
   // Cartelle: si vedono solo nella schermata principale
-  let cartelle = cartella ? [] : await Db.cartelle();
+  // (la copia del libretto di un coro non si vede qui: si apre dal gruppo)
+  let cartelle = cartella ? [] : (await Db.cartelle()).filter((c) => !c.libretto);
   if (cercato) cartelle = cartelle.filter((c) => semplifica(c.nome).includes(cercato));
   elencoCartelle.innerHTML = '';
   for (const c of cartelle) {
@@ -571,8 +573,12 @@ function tornaDaEsterno() {
   else mostraGruppi();
 }
 
+// true se il canto è stato aperto dalla scheda Libretto del gruppo (indietro si torna lì)
+let tornaAlLibretto = false;
+
 async function mostraCanto(id) {
   cantoEsterno = null;
+  tornaAlLibretto = false;
   const canto = await Db.canto(id);
   if (!canto) {
     avviso('Questo canto non è più disponibile su questo dispositivo.');
@@ -591,7 +597,7 @@ async function mostraCanto(id) {
   document.querySelector('.comandi-fondo').hidden = delLibretto;
 
   disegnaTesto(canto.testo);
-  await preparaCorrezioni(delLibretto ? canto : null);
+  await preparaCorrezioni(canto);
   mostraAllegati();
   aggiornaNavScaletta(id);
 }
@@ -769,9 +775,9 @@ function ridisegnaSpartiti() {
 }
 
 // ---------- Correzioni del direttore sopra lo spartito ----------
-// Si può scrivere sopra i PDF e le foto (penna, evidenziatore, parole) dei canti del libretto
-// (i direttori), dei canti condivisi nel gruppo (chi l'ha condiviso e i direttori) e dei canti
-// mandati in privato (le due persone). Il file originale non viene mai cambiato: le correzioni
+// Si può scrivere sopra i PDF e le foto (penna, evidenziatore, parole) dei propri canti (sempre,
+// anche senza internet), dei canti del libretto (i direttori), dei canti condivisi nel gruppo
+// (chi l'ha condiviso e i direttori) e dei canti mandati in privato (le due persone). Il file originale non viene mai cambiato: le correzioni
 // sono un "foglio trasparente" appoggiato sopra, salvato a parte. Chi guarda le vede in diretta,
 // e con «Vedi l'originale» si può togliere il foglio trasparente.
 
@@ -795,7 +801,16 @@ async function preparaCorrezioni(canto) {
   correzioni = null;
   $('comandi-correzioni').hidden = true;
   spartitiCanto.classList.remove('senza-correzioni');
-  if (!canto || !canto.libretto) return;
+  if (!canto) return;
+  if (!canto.libretto) {
+    const perAllegato = {};
+    for (const a of await Db.allegati(canto.id)) if (a.correzioni && a.correzioni.length) perAllegato[a.id] = copia(a.correzioni);
+    if (cantoCorrente !== canto.id) return;
+    correzioni = { gruppo: null, origine: { tipo: 'mio', rif: canto.id }, perAllegato, puoCorreggere: true };
+    aggiornaComandiCorrezioni();
+    disegnaStrati();
+    return;
+  }
   const gid = canto.libretto.gruppo;
   const salvate = ((await Db.impostazione('correzioni:' + gid)) || {})[canto.id] || {};
   const puoCorreggere = await sonoDirettoreDel(gid);
@@ -946,8 +961,17 @@ function cambiaSegni(allegatoId, nuovi) {
   salvaCorrezioniPresto(allegatoId);
 }
 
+const correzioniMie = (c) => c && c.origine.tipo === 'mio';
+
 function salvaCorrezioniPresto(allegatoId) {
   const c = correzioni;
+  if (correzioniMie(c)) {
+    // mio canto: si salva subito sul telefono (e poi va nell'account con la sincronizzazione)
+    Db.aggiornaAllegato(allegatoId, { correzioni: c.perAllegato[allegatoId] || [] })
+      .then(() => scriviStatoCorrezioni('✓ Salvate'))
+      .catch((err) => avviso('⚠ ' + err.message));
+    return;
+  }
   scriviStatoCorrezioni('Salvo…');
   clearTimeout(salvataggiCorrezioni.get(allegatoId));
   salvataggiCorrezioni.set(allegatoId, setTimeout(async () => {
@@ -1052,7 +1076,7 @@ document.querySelectorAll('#barra-correzioni [data-strumento]').forEach((b) =>
 
 $('btn-correggi').addEventListener('click', async () => {
   if (!correzioni) return;
-  if (!navigator.onLine) return avviso('📴 Per correggere lo spartito serve internet: le correzioni arrivano subito a tutto il coro.');
+  if (!navigator.onLine && !correzioniMie(correzioni)) return avviso('📴 Per correggere questo spartito serve internet: le correzioni arrivano subito agli altri.');
   modoCorrezione = true;
   correzioniCambiate = false;
   cronologiaCorrezioni = [];
@@ -1097,7 +1121,8 @@ function fineCorrezioni() {
 $('btn-fine-correzioni').addEventListener('click', () => {
   const cambiate = correzioniCambiate;
   fineCorrezioni();
-  if (cambiate) avviso('Correzioni salvate: ' + (correzioni && correzioni.origine.tipo === 'privato' ? 'le vedete tutti e due' : 'tutto il gruppo le vede') +
+  if (cambiate) avviso(correzioniMie(correzioni) ? 'Correzioni salvate. Il PDF originale resta com\'era.'
+    : 'Correzioni salvate: ' + (correzioni && correzioni.origine.tipo === 'privato' ? 'le vedete tutti e due' : 'tutto il gruppo le vede') +
     '. Il PDF originale resta com\'era.');
 });
 
@@ -1105,17 +1130,17 @@ $('btn-annulla-segno').addEventListener('click', () => {
   if (!cronologiaCorrezioni.length) return avviso('Niente da annullare.');
   const prima = cronologiaCorrezioni.pop();
   const ids = new Set([...Object.keys(prima), ...Object.keys(correzioni.perAllegato)]);
-  for (const id of ids) {
-    if (JSON.stringify(prima[id] || []) !== JSON.stringify(correzioni.perAllegato[id] || [])) salvaCorrezioniPresto(id);
-  }
+  const cambiati = [...ids].filter((id) => JSON.stringify(prima[id] || []) !== JSON.stringify(correzioni.perAllegato[id] || []));
   correzioni.perAllegato = prima;
+  cambiati.forEach(salvaCorrezioniPresto);
   correzioniCambiate = true;
   disegnaStrati();
 });
 
 $('btn-togli-correzioni').addEventListener('click', async () => {
   if (!ciSonoCorrezioni()) return avviso('Su questo spartito non ci sono correzioni.');
-  const scelta = await chiediScelta('Togliere tutte le correzioni da questo canto?\n\nLo spartito tornerà come l\'originale per tutti.',
+  const scelta = await chiediScelta('Togliere tutte le correzioni da questo canto?\n\nLo spartito tornerà come l\'originale' +
+    (correzioniMie(correzioni) ? '.' : ' per tutti.'),
     [{ valore: 'si', testo: 'Togli tutte le correzioni', pericolo: true }]);
   if (!scelta) return;
   cronologiaCorrezioni.push(copia(correzioni.perAllegato));
@@ -1435,6 +1460,9 @@ btnAggiungi.addEventListener('click', () => mostraModulo());
 btnIndietro.addEventListener('click', () => {
   if (!schermate.canto.hidden && cantoEsterno) {
     tornaDaEsterno();
+  } else if (!schermate.canto.hidden && tornaAlLibretto && gruppoCorrente && !percorsoScaletta) {
+    schedaRichiesta = 'libretto';
+    apriChat(gruppoCorrente);
   } else if (!schermate.canto.hidden && percorsoScaletta && scalettaAperta) {
     percorsoScaletta = null;
     disegnaScaletta();
@@ -1446,6 +1474,9 @@ btnIndietro.addEventListener('click', () => {
     mostraCanto(idInModifica);
   } else if (schermate.elenco.hidden) {
     mostraElenco();
+  } else if (String(cartellaCorrente).startsWith('libretto:')) {
+    cartellaCorrente = null;
+    mostraGruppi();
   } else {
     cartellaCorrente = null;
     ricerca = '';
@@ -1780,6 +1811,7 @@ async function mostraGruppi() {
   const nota = $('gruppi-avviso');
   const contenuto = $('gruppi-contenuto');
   $('btn-gruppi-accedi').hidden = true;
+  $('libretti-offline').hidden = true;
 
   if (!Gruppi.disponibili()) {
     nota.textContent = Sync.stato === 'spento'
@@ -1794,6 +1826,7 @@ async function mostraGruppi() {
     nota.textContent = '📴 I gruppi funzionano solo con internet. Riprova quando torna la connessione.';
     nota.hidden = false;
     contenuto.hidden = true;
+    mostraLibrettiOffline();
     return;
   }
 
@@ -1822,6 +1855,25 @@ async function mostraGruppi() {
 }
 
 $('btn-gruppi-accedi').addEventListener('click', () => apriIniziale(true));
+
+// Senza internet: i libretti dei cori salvati su questo telefono si possono aprire lo stesso
+async function mostraLibrettiOffline() {
+  const ul = $('libretti-offline');
+  ul.innerHTML = '';
+  const libretti = (await Db.cartelle()).filter((c) => c.libretto);
+  for (const c of libretti) {
+    const btn = crea('button', 'voce-cartella', c.nome + ' · senza internet');
+    btn.addEventListener('click', () => {
+      cartellaCorrente = c.id;
+      ricerca = '';
+      mostraElenco();
+    });
+    const li = crea('li');
+    li.append(btn);
+    ul.append(li);
+  }
+  ul.hidden = !libretti.length;
+}
 
 $('btn-crea-gruppo').addEventListener('click', async () => {
   const nomeGruppo = await chiediNome('Nome del nuovo gruppo (es. «Coro parrocchia»)');
@@ -1984,7 +2036,7 @@ function disegnaChat(lista, salvati, corretti = new Set()) {
     // (i canti che ho condiviso io sono già tra i miei: per quelli niente "Salva")
     if (!mio) {
       const salva = crea('button', 'btn-piccolo salva', salvati.has(c.id) ? '✓ Salvato' : '⬇ Salva nei miei canti');
-      salva.addEventListener('click', () => salvaCondiviso(c, salva));
+      salva.addEventListener('click', () => salvaCondiviso({ ...c, origine: { tipo: 'condivisione', rif: c.id } }, salva));
       azioni.append(salva);
       // ⋯ : segnala, blocca e (per chi ha creato il gruppo) togli dalla chat
       const altro = crea('button', 'btn-mini', '⋯');
@@ -2084,6 +2136,7 @@ async function chiediDestinazione(c) {
 }
 
 async function salvaCondiviso(c, pulsante) {
+  // c.origine: da dove vengono le correzioni da copiare nel mio canto
   const dove = await chiediDestinazione(c);
   if (!dove) return;
   pulsante.disabled = true;
@@ -2614,7 +2667,8 @@ async function apriDalLibretto(id) {
     await aggiornaLibrettiOra();
   }
   if (!(await Db.canto(id))) return avviso('Questo canto non è ancora disponibile su questo dispositivo: serve internet.');
-  mostraCanto(id);
+  await mostraCanto(id);
+  tornaAlLibretto = true;
 }
 
 // ---- File per voce (libretto) ----
@@ -2779,7 +2833,7 @@ function schedaCantoPrivato(g, x, altro, mio, corretti) {
   }
   if (!mio) {
     const salva = crea('button', 'btn-piccolo salva', '⬇ Salva nei miei canti');
-    salva.addEventListener('click', () => salvaCondiviso(c, salva));
+    salva.addEventListener('click', () => salvaCondiviso({ ...c, origine: { tipo: 'privato', rif: x.id } }, salva));
     azioni.append(salva);
   }
   scheda.append(azioni);

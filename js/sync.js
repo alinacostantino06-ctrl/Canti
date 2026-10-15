@@ -34,9 +34,12 @@ const CAMPI = {
   },
   allegati: {
     online: (r) => ({ id: r.id, canto_id: r.cantoId, nome: r.nome, tipo: r.tipo, mime: r.mime ?? null,
-      eliminato: r.eliminato ?? null, modificato: r.modificato }),
+      eliminato: r.eliminato ?? null, modificato: r.modificato,
+      // le correzioni sullo spartito (solo se ce ne sono: serve supabase/correzioni-miei-canti.sql)
+      ...(r.correzioni !== undefined ? { correzioni: r.correzioni } : {}) }),
     locale: (r) => ({ id: r.id, cancellato: !!r.cancellato, cantoId: r.canto_id, nome: r.nome, tipo: r.tipo, mime: r.mime,
-      eliminato: r.eliminato == null ? null : Number(r.eliminato), modificato: Number(r.modificato) }),
+      eliminato: r.eliminato == null ? null : Number(r.eliminato), modificato: Number(r.modificato),
+      correzioni: r.correzioni ?? undefined }),
   },
 };
 

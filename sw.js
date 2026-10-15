@@ -10,7 +10,7 @@
 // Se aggiungi un NUOVO file all'app (es. un altro .js), aggiungilo a FILE_APP
 // e cambia il numero di VERSIONE.
 
-const VERSIONE = 'canti-v15';
+const VERSIONE = 'canti-v17';
 
 const FILE_APP = [
   './',

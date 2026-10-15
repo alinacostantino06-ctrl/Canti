@@ -487,7 +487,13 @@ const Gruppi = {
     const cantoId = await Db.aggiungiCanto({
       titolo: condivisione.titolo, sezione: dove.sezione, cartella: dove.cartella, testo: condivisione.testo,
     });
-    for (const f of files) await Db.aggiungiAllegato(cantoId, f.nome, f.tipo, f.file);
+    // le correzioni fatte sullo spartito nel gruppo (o in privato) restano anche nel mio canto
+    const corr = condivisione.origine ? (await this.correzioniDi(condivisione.origine)) || {} : {};
+    for (const f of files) {
+      const id = await Db.aggiungiAllegato(cantoId, f.nome, f.tipo, f.file);
+      const segni = corr[f.id || f.percorso.split('/').pop()];
+      if (segni && segni.length) await Db.aggiornaAllegato(id, { correzioni: segni });
+    }
 
     const salvati = (await Db.impostazione('salvatiDaiGruppi')) || [];
     await Db.salvaImpostazione('salvatiDaiGruppi', [...salvati, condivisione.id]);

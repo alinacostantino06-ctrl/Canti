@@ -47,7 +47,10 @@ function mostra(nome, titoloBarra, conIndietro) {
     document.body.classList.remove('con-alfabeto');
   }
   if (nome !== 'canto' && nome !== 'scaletta') percorsoScaletta = null;
-  if (nome !== 'canto') fermaCorrezioni();
+  if (nome !== 'canto') {
+    fermaCorrezioni();
+    cantoEsterno = null;
+  }
   for (const [chiave, el] of Object.entries(schermate)) el.hidden = chiave !== nome;
   titolo.textContent = titoloBarra;
   btnIndietro.hidden = !conIndietro;
@@ -516,7 +519,60 @@ window.addEventListener('resize', () => {
   ridisegnaSpartiti();
 });
 
+// I file del canto aperto (uno dei miei, del libretto, oppure uno condiviso aperto dalla chat)
+const allegatiAperti = async () =>
+  cantoEsterno ? cantoEsterno.allegati : cantoCorrente ? Db.allegati(cantoCorrente) : [];
+
+// ---------- Aprire un canto condiviso (nel gruppo o in privato) senza salvarlo ----------
+// est: { titolo, testo, allegati (con percorso), gruppo, origine: { tipo, rif }, puoCorreggere,
+//        nota, ritorno: { scheda, con }, altro (in privato: l'altra persona) }
+let cantoEsterno = null;
+const fileScaricati = new Map(); // percorso → dati (per non riscaricarli ogni volta)
+const idFile = (f) => f.id || f.percorso.split('/').pop();
+
+async function apriCantoEsterno(est) {
+  if (!navigator.onLine) return avviso('📴 Per aprire i canti della chat serve internet.');
+  const lista = est.allegati || [];
+  const allegati = [];
+  try {
+    for (let i = 0; i < lista.length; i++) {
+      const f = lista[i];
+      if (!fileScaricati.has(f.percorso)) {
+        avviso('Scarico i file: ' + (i + 1) + ' di ' + lista.length + '…');
+        fileScaricati.set(f.percorso, await (await Gruppi.scaricaFile(f)).arrayBuffer());
+      }
+      allegati.push({ id: idFile(f), nome: f.nome, tipo: f.tipo, mime: f.mime, voce: f.voce || '', dati: fileScaricati.get(f.percorso) });
+    }
+  } catch (err) {
+    return avviso('⚠ ' + err.message);
+  }
+  $('avviso').hidden = true;
+  cantoEsterno = { ...est, allegati };
+  cantoCorrente = 'esterno';
+  mostra('canto', gruppoCorrente ? gruppoCorrente.nome : NOME_ELENCO, true);
+  cantoEsterno = { ...est, allegati }; // (mostra() lo toglie solo uscendo dal canto)
+  titoloCanto.textContent = est.titolo;
+  $('nota-libretto').hidden = !est.nota;
+  $('nota-libretto').textContent = est.nota || '';
+  for (const el of ['etichetta-audio-canto', 'etichetta-spartito-canto']) $(el).hidden = true;
+  document.querySelector('.comandi-fondo').hidden = true;
+  disegnaTesto(est.testo || '');
+  preparaCorrezioniEsterne(cantoEsterno);
+  mostraAllegati();
+  aggiornaNavScaletta(null);
+}
+
+// Dal canto aperto dalla chat si torna alla chat (o alla conversazione privata)
+function tornaDaEsterno() {
+  const { ritorno } = cantoEsterno;
+  schedaRichiesta = ritorno.scheda;
+  conversazioneRichiesta = ritorno.con || null;
+  if (gruppoCorrente) apriChat(gruppoCorrente);
+  else mostraGruppi();
+}
+
 async function mostraCanto(id) {
+  cantoEsterno = null;
   const canto = await Db.canto(id);
   if (!canto) {
     avviso('Questo canto non è più disponibile su questo dispositivo.');
@@ -573,11 +629,11 @@ async function mostraAllegati() {
   indirizziFile = [];
   allegatiCanto.innerHTML = '';
 
-  const canto = await Db.canto(cantoCorrente);
-  const delLibretto = !!(canto && canto.libretto);
+  const canto = cantoEsterno || (await Db.canto(cantoCorrente));
+  const delLibretto = !!(canto && (canto.libretto || cantoEsterno)); // (si guardano soltanto)
   const voce = await voceDaUsare(canto);
   const laMiaVoce = (a) => !!voce && (a.voce ? a.voce === voce : a.tipo === 'audio' && a.nome.toLowerCase().includes(voce));
-  const lista = (await Db.allegati(cantoCorrente)).sort((x, y) => laMiaVoce(y) - laMiaVoce(x));
+  const lista = [...(await allegatiAperti())].sort((x, y) => laMiaVoce(y) - laMiaVoce(x));
 
   for (const a of lista) {
     // Un file arrivato da un altro dispositivo può essere ancora in download
@@ -640,7 +696,7 @@ let disegnoInCorso = 0; // per fermare un disegno vecchio se nel frattempo si ca
 
 async function disegnaSpartiti() {
   const mio = ++disegnoInCorso;
-  const spartiti = cantoCorrente ? (await Db.allegati(cantoCorrente)).filter((a) => a.tipo === 'spartito' || a.tipo === 'pdf') : [];
+  const spartiti = (await allegatiAperti()).filter((a) => a.tipo === 'spartito' || a.tipo === 'pdf');
   if (mio !== disegnoInCorso) return;
   spartitiCanto.innerHTML = '';
   spartitiCanto.style.setProperty('--scala', scalaTesto);
@@ -713,12 +769,14 @@ function ridisegnaSpartiti() {
 }
 
 // ---------- Correzioni del direttore sopra lo spartito ----------
-// Il direttore può scrivere sopra i PDF e le foto dei canti del libretto (penna, evidenziatore,
-// parole). Il file originale non viene mai cambiato: le correzioni sono un "foglio trasparente"
-// appoggiato sopra, salvato a parte. Tutto il coro le vede in diretta, e con «Vedi l'originale»
-// si può togliere il foglio trasparente.
+// Si può scrivere sopra i PDF e le foto (penna, evidenziatore, parole) dei canti del libretto
+// (i direttori), dei canti condivisi nel gruppo (chi l'ha condiviso e i direttori) e dei canti
+// mandati in privato (le due persone). Il file originale non viene mai cambiato: le correzioni
+// sono un "foglio trasparente" appoggiato sopra, salvato a parte. Chi guarda le vede in diretta,
+// e con «Vedi l'originale» si può togliere il foglio trasparente.
 
-let correzioni = null;        // { gruppo, libretto, perAllegato: { [id del file]: [segni] } } del canto aperto
+// Il canto aperto: { gruppo, origine: { tipo, rif }, perAllegato: { [id del file]: [segni] }, puoCorreggere }
+let correzioni = null;
 let modoCorrezione = false;
 let strumento = { tipo: 'penna', colore: '#d0021b' };
 let tratto = null;            // il tratto che si sta disegnando adesso
@@ -739,18 +797,30 @@ async function preparaCorrezioni(canto) {
   spartitiCanto.classList.remove('senza-correzioni');
   if (!canto || !canto.libretto) return;
   const gid = canto.libretto.gruppo;
-  const lid = canto.id;
-  const salvate = ((await Db.impostazione('correzioni:' + gid)) || {})[lid] || {};
-  if (cantoCorrente !== lid) return;
-  correzioni = { gruppo: gid, libretto: lid, perAllegato: copia(salvate) };
+  const salvate = ((await Db.impostazione('correzioni:' + gid)) || {})[canto.id] || {};
+  const puoCorreggere = await sonoDirettoreDel(gid);
+  if (cantoCorrente !== canto.id) return;
+  correzioni = { gruppo: gid, origine: { tipo: 'libretto', rif: canto.id }, perAllegato: copia(salvate), puoCorreggere };
+  avviaCorrezioni();
+}
+
+// Le correzioni di un canto condiviso nel gruppo o mandato in privato (solo con internet)
+function preparaCorrezioniEsterne(est) {
+  fermaCorrezioni();
+  spartitiCanto.classList.remove('senza-correzioni');
+  correzioni = { gruppo: est.gruppo, origine: est.origine, perAllegato: {}, puoCorreggere: !!est.puoCorreggere };
+  avviaCorrezioni();
+}
+
+function avviaCorrezioni() {
+  const c = correzioni;
   aggiornaComandiCorrezioni();
   disegnaStrati();
-
   if (!Gruppi.disponibili() || !navigator.onLine) return;
-  // le ultime correzioni (se nel frattempo il direttore ha scritto qualcosa)...
-  Gruppi.correzioniDi(lid).then((fresche) => {
-    if (fresche && correzioni && correzioni.libretto === lid && !modoCorrezione) {
-      correzioni.perAllegato = fresche;
+  // le ultime correzioni (se nel frattempo qualcuno ha scritto qualcosa)...
+  Gruppi.correzioniDi(c.origine).then((fresche) => {
+    if (fresche && correzioni === c && !modoCorrezione) {
+      c.perAllegato = fresche;
       ricordaCorrezioni();
       aggiornaComandiCorrezioni();
       disegnaStrati();
@@ -758,9 +828,9 @@ async function preparaCorrezioni(canto) {
   });
   // ...e quelle che arrivano mentre si guarda il canto
   try {
-    smettiCorrezioni = Gruppi.ascoltaCorrezioni(lid, (riga) => {
-      if (!riga || !correzioni || correzioni.libretto !== lid || modoCorrezione) return;
-      correzioni.perAllegato[riga.allegato_id] = riga.segni || [];
+    smettiCorrezioni = Gruppi.ascoltaCorrezioni(c.origine, (riga) => {
+      if (!riga || correzioni !== c || modoCorrezione) return;
+      c.perAllegato[riga.allegato_id] = riga.segni || [];
       ricordaCorrezioni();
       aggiornaComandiCorrezioni();
       disegnaStrati();
@@ -777,12 +847,12 @@ function fermaCorrezioni() {
   }
 }
 
-// Salvo sul dispositivo le correzioni del canto (per vederle anche senza internet)
+// Salvo sul dispositivo le correzioni dei canti del libretto (per vederle anche senza internet)
 async function ricordaCorrezioni() {
-  if (!correzioni) return;
+  if (!correzioni || correzioni.origine.tipo !== 'libretto') return;
   const chiave = 'correzioni:' + correzioni.gruppo;
   const tutte = (await Db.impostazione(chiave)) || {};
-  tutte[correzioni.libretto] = copia(correzioni.perAllegato);
+  tutte[correzioni.origine.rif] = copia(correzioni.perAllegato);
   await Db.salvaImpostazione(chiave, tutte);
 }
 
@@ -794,10 +864,9 @@ async function sonoDirettoreDel(gruppoId) {
 async function aggiornaComandiCorrezioni() {
   const c = correzioni;
   const haSpartiti = !!spartitiCanto.querySelector('.pagina-spartito') ||
-    (cantoCorrente && (await Db.allegati(cantoCorrente)).some((a) => a.tipo === 'spartito' || a.tipo === 'pdf'));
+    (await allegatiAperti()).some((a) => a.tipo === 'spartito' || a.tipo === 'pdf');
   if (c !== correzioni) return;
-  const direttore = !!c && haSpartiti && (await sonoDirettoreDel(c.gruppo));
-  $('btn-correggi').hidden = !direttore || modoCorrezione;
+  $('btn-correggi').hidden = !c || !c.puoCorreggere || !haSpartiti || modoCorrezione;
   $('btn-originale').hidden = !c || !ciSonoCorrezioni() || modoCorrezione;
   $('btn-originale').textContent = spartitiCanto.classList.contains('senza-correzioni')
     ? '✏️ Vedi le correzioni' : "👁 Vedi l'originale";
@@ -884,7 +953,7 @@ function salvaCorrezioniPresto(allegatoId) {
   salvataggiCorrezioni.set(allegatoId, setTimeout(async () => {
     salvataggiCorrezioni.delete(allegatoId);
     try {
-      await Gruppi.salvaCorrezioni(c.gruppo, c.libretto, allegatoId, c.perAllegato[allegatoId] || []);
+      await Gruppi.salvaCorrezioni(c.gruppo, c.origine, allegatoId, c.perAllegato[allegatoId] || []);
       if (!salvataggiCorrezioni.size) scriviStatoCorrezioni('✓ Il coro le vede');
     } catch (err) {
       scriviStatoCorrezioni(navigator.onLine ? '⚠ Non salvate' : '📴 Serve internet');
@@ -1010,14 +1079,17 @@ function fineCorrezioni() {
     clearTimeout(timer);
     salvataggiCorrezioni.delete(id);
     const c = correzioni;
-    if (c) Gruppi.salvaCorrezioni(c.gruppo, c.libretto, id, c.perAllegato[id] || [])
+    if (c) Gruppi.salvaCorrezioni(c.gruppo, c.origine, id, c.perAllegato[id] || [])
       .catch(() => avviso('⚠ Alcune correzioni non sono state salvate: serve internet.'));
   }
   if (correzioniCambiate && correzioni) {
     ricordaCorrezioni();
-    Db.canto(correzioni.libretto).then((canto) => {
-      if (canto) Notifiche.invia(correzioni.gruppo, 'libretto', '✏️ corretto lo spartito di «' + canto.titolo + '»');
-    });
+    const { gruppo, origine } = correzioni;
+    const quale = '«' + titoloCanto.textContent + '»';
+    if (origine.tipo === 'libretto') Notifiche.invia(gruppo, 'libretto', '✏️ corretto lo spartito di ' + quale);
+    if (origine.tipo === 'privato' && cantoEsterno && cantoEsterno.altro) {
+      Notifiche.invia(gruppo, 'privato', '✏️ ho corretto lo spartito di ' + quale, cantoEsterno.altro);
+    }
   }
   correzioniCambiate = false;
   aggiornaComandiCorrezioni();
@@ -1025,7 +1097,8 @@ function fineCorrezioni() {
 $('btn-fine-correzioni').addEventListener('click', () => {
   const cambiate = correzioniCambiate;
   fineCorrezioni();
-  if (cambiate) avviso('Correzioni salvate: tutto il coro le vede. Il PDF originale resta com\'era.');
+  if (cambiate) avviso('Correzioni salvate: ' + (correzioni && correzioni.origine.tipo === 'privato' ? 'le vedete tutti e due' : 'tutto il gruppo le vede') +
+    '. Il PDF originale resta com\'era.');
 });
 
 $('btn-annulla-segno').addEventListener('click', () => {
@@ -1042,7 +1115,7 @@ $('btn-annulla-segno').addEventListener('click', () => {
 
 $('btn-togli-correzioni').addEventListener('click', async () => {
   if (!ciSonoCorrezioni()) return avviso('Su questo spartito non ci sono correzioni.');
-  const scelta = await chiediScelta('Togliere tutte le correzioni da questo canto?\n\nLo spartito tornerà come l\'originale per tutto il coro.',
+  const scelta = await chiediScelta('Togliere tutte le correzioni da questo canto?\n\nLo spartito tornerà come l\'originale per tutti.',
     [{ valore: 'si', testo: 'Togli tutte le correzioni', pericolo: true }]);
   if (!scelta) return;
   cronologiaCorrezioni.push(copia(correzioni.perAllegato));
@@ -1360,7 +1433,9 @@ btnAggiungi.addEventListener('click', () => mostraModulo());
 // "Indietro": dalla modifica si torna al canto; dal canto o dal modulo all'elenco;
 // da una cartella alla sezione
 btnIndietro.addEventListener('click', () => {
-  if (!schermate.canto.hidden && percorsoScaletta && scalettaAperta) {
+  if (!schermate.canto.hidden && cantoEsterno) {
+    tornaDaEsterno();
+  } else if (!schermate.canto.hidden && percorsoScaletta && scalettaAperta) {
     percorsoScaletta = null;
     disegnaScaletta();
   } else if (!schermate.scaletta.hidden) {
@@ -1836,11 +1911,12 @@ async function caricaChat(vaiInFondo = false) {
   const mio = ++caricamentoChat;
   const nota = $('chat-avviso');
   try {
-    const [lista, salvati] = await Promise.all([Gruppi.condivisioni(g.id), Gruppi.giaSalvati()]);
+    const [lista, salvati, corretti] = await Promise.all([Gruppi.condivisioni(g.id), Gruppi.giaSalvati(),
+      Gruppi.coroAttivo(g) ? Gruppi.cantiCorretti(g.id) : new Set()]);
     if (mio !== caricamentoChat || gruppoCorrente !== g) return;
     nota.hidden = true;
     const eraInFondo = vaiInFondo || window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
-    disegnaChat(lista, salvati);
+    disegnaChat(lista, salvati, corretti);
     if (eraInFondo) window.scrollTo(0, document.body.scrollHeight);
     if (lista.length) {
       await Gruppi.segnaVisto(g.id, lista[lista.length - 1].creato);
@@ -1854,7 +1930,20 @@ async function caricaChat(vaiInFondo = false) {
 
 const formatoOra = (d) => d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 
-function disegnaChat(lista, salvati) {
+// "testo con accordi · 🎵 2 · 🎼 1"
+function riassuntoCanto(c) {
+  const files = c.allegati || [];
+  const quanti = (tipo) => files.filter((f) => f.tipo === tipo).length;
+  const parti = [];
+  if ((c.testo || '').trim()) parti.push(analizzaTesto(c.testo).conAccordi ? 'testo con accordi' : 'testo');
+  if (quanti('audio')) parti.push(`🎵 ${quanti('audio')}`);
+  if (quanti('spartito')) parti.push(`🎼 ${quanti('spartito')}`);
+  if (quanti('pdf')) parti.push(`📄 ${quanti('pdf')}`);
+  return parti.join(' · ') || 'solo titolo';
+}
+const siPuoAprire = (c) => !!((c.testo || '').trim() || (c.allegati || []).length);
+
+function disegnaChat(lista, salvati, corretti = new Set()) {
   const ul = $('elenco-chat');
   ul.innerHTML = '';
   $('chat-vuota').hidden = lista.length > 0;
@@ -1875,20 +1964,22 @@ function disegnaChat(lista, salvati) {
 
     const scheda = crea('div', 'scheda-canto');
     scheda.append(crea('div', 'titolo-condiviso', '♪ ' + c.titolo));
-    const files = c.allegati || [];
-    const quanti = (tipo) => files.filter((f) => f.tipo === tipo).length;
-    const parti = [];
-    if (c.testo.trim()) parti.push(analizzaTesto(c.testo).conAccordi ? 'testo con accordi' : 'testo');
-    if (quanti('audio')) parti.push(`🎵 ${quanti('audio')}`);
-    if (quanti('spartito')) parti.push(`🎼 ${quanti('spartito')}`);
-    if (quanti('pdf')) parti.push(`📄 ${quanti('pdf')}`);
-    scheda.append(crea('div', 'dettaglio', parti.join(' · ') || 'solo titolo'));
+    scheda.append(crea('div', 'dettaglio', riassuntoCanto(c) + (corretti.has(c.id) ? ' · ✏️ con correzioni' : '')));
 
     const azioni = crea('div', 'azioni-chat');
-    if (c.testo.trim()) {
-      const leggi = crea('button', 'btn-piccolo', '👁 Leggi');
-      leggi.addEventListener('click', () => mostraAnteprima(c));
-      azioni.append(leggi);
+    if (siPuoAprire(c)) {
+      const apri = crea('button', 'btn-piccolo', '👁 Apri');
+      apri.addEventListener('click', () => {
+        const g = gruppoCorrente;
+        apriCantoEsterno({
+          titolo: c.titolo, testo: c.testo, allegati: c.allegati, gruppo: g.id,
+          origine: { tipo: 'condivisione', rif: c.id },
+          puoCorreggere: Gruppi.coroAttivo(g) && (mio || Gruppi.sonoDirettore(g)),
+          nota: '♪ Condiviso da ' + (mio ? 'te' : c.autore) + ' nel gruppo «' + g.nome + '».',
+          ritorno: { scheda: 'chat' },
+        });
+      });
+      azioni.append(apri);
     }
     // (i canti che ho condiviso io sono già tra i miei: per quelli niente "Salva")
     if (!mio) {
@@ -2011,8 +2102,9 @@ async function salvaCondiviso(c, pulsante) {
 }
 
 // Scelta di uno dei miei canti (con ricerca per titolo)
-function scegliCanto() {
+function scegliCanto(domanda = 'Quale canto vuoi condividere?') {
   const dialogo = $('dialogo-canti');
+  dialogo.querySelector('p').textContent = domanda;
   const cerca = $('cerca-canto');
   const lista = $('lista-canti');
   return new Promise(async (resolve) => {
@@ -2501,7 +2593,7 @@ async function mostraLibretto() {
 
 $('btn-aggiungi-libretto').addEventListener('click', async () => {
   const g = gruppoCorrente;
-  const id = await scegliCanto();
+  const id = await scegliCanto('Quale canto vuoi aggiungere al libretto?');
   if (!id) return;
   const vociFile = await vociPerIlLibretto(id);
   if (!vociFile) return;
@@ -2617,7 +2709,11 @@ async function mostraMessaggi(vaiInFondo = false) {
   if (conversazioneCon && !altro) conversazioneCon = null; // non è più nel gruppo
   $('scegli-conversazione').hidden = !!conversazioneCon;
   $('conversazione').hidden = !conversazioneCon;
-  if (conversazioneCon) disegnaConversazione(g, altro, lista, vaiInFondo);
+  if (conversazioneCon) {
+    const corretti = lista.some((m) => m.canto) ? await Gruppi.cantiCorretti(g.id) : new Set();
+    if (gruppoCorrente !== g) return;
+    disegnaConversazione(g, altro, lista, vaiInFondo, corretti);
+  }
   else disegnaConversazioni(g, membri, lista);
   aggiornaPallinoMessaggi(lista);
 }
@@ -2649,7 +2745,8 @@ function disegnaConversazioni(g, membri, lista) {
     if (m.voce) riga.append(crea('span', 'etichetta-voce', VOCI[m.voce] || m.voce));
     if (nuovi) riga.append(crea('span', 'nuovi', nuovi === 1 ? '1 nuovo' : nuovi + ' nuovi'));
     btn.append(riga);
-    btn.append(crea('span', 'anteprima', ultimo ? (ultimo.da === io ? 'Tu: ' : '') + ultimo.testo : 'Scrivi un messaggio'));
+    const ultimoTesto = ultimo && (ultimo.testo || (ultimo.canto ? '♪ ' + ultimo.canto.titolo : ''));
+    btn.append(crea('span', 'anteprima', ultimo ? (ultimo.da === io ? 'Tu: ' : '') + ultimoTesto : 'Scrivi un messaggio'));
     btn.addEventListener('click', () => {
       conversazioneCon = m.user_id;
       mostraMessaggi(true);
@@ -2662,7 +2759,34 @@ function disegnaConversazioni(g, membri, lista) {
 }
 
 // La conversazione con una persona, come in un'app di messaggi
-function disegnaConversazione(g, altro, lista, vaiInFondo) {
+// Il canto dentro un messaggio privato: Apri (e correggi), Salva nei miei canti
+function schedaCantoPrivato(g, x, altro, mio, corretti) {
+  const c = { id: x.id, titolo: x.canto.titolo, testo: x.canto.testo || '', allegati: x.canto.allegati || [] };
+  const scheda = crea('div', 'scheda-canto');
+  scheda.append(crea('div', 'titolo-condiviso', '♪ ' + c.titolo));
+  scheda.append(crea('div', 'dettaglio', riassuntoCanto(c) + (corretti.has(x.id) ? ' · ✏️ con correzioni' : '')));
+  const azioni = crea('div', 'azioni-chat');
+  if (siPuoAprire(c)) {
+    const apri = crea('button', 'btn-piccolo', '👁 Apri');
+    apri.addEventListener('click', () => apriCantoEsterno({
+      ...c, gruppo: g.id, origine: { tipo: 'privato', rif: x.id },
+      puoCorreggere: Gruppi.coroAttivo(g), altro: altro.user_id,
+      nota: mio ? '✉️ L\'hai mandato a ' + altro.nome + ': potete correggerlo tutti e due.'
+        : '✉️ Te l\'ha mandato ' + altro.nome + ': potete correggerlo tutti e due.',
+      ritorno: { scheda: 'messaggi', con: altro.user_id },
+    }));
+    azioni.append(apri);
+  }
+  if (!mio) {
+    const salva = crea('button', 'btn-piccolo salva', '⬇ Salva nei miei canti');
+    salva.addEventListener('click', () => salvaCondiviso(c, salva));
+    azioni.append(salva);
+  }
+  scheda.append(azioni);
+  return scheda;
+}
+
+function disegnaConversazione(g, altro, lista, vaiInFondo, corretti = new Set()) {
   const io = Sync.utente.id;
   $('nome-conversazione').textContent = '✉️ ' + altro.nome;
   const nostri = lista.filter((x) => (x.da === altro.user_id && x.a === io) || (x.da === io && x.a === altro.user_id));
@@ -2683,10 +2807,13 @@ function disegnaConversazione(g, altro, lista, vaiInFondo) {
     const testa = crea('div', 'autore', (mio ? 'Tu' : altro.nome) + ' · ' + formatoOra(quando));
     if (mio && x.letto) testa.append(crea('span', 'letto', '✓✓ letto'));
     const azioni = crea('button', 'btn-mini', mio ? '🗑' : '⋯');
+    azioni.setAttribute('aria-label', mio ? 'Elimina il messaggio' : 'Segnala o blocca');
     azioni.title = mio ? 'Elimina il messaggio' : 'Segnala o blocca';
     azioni.addEventListener('click', () => (mio ? eliminaPrivato(x) : azioniSuPrivato(x, altro)));
     testa.append(azioni);
-    li.append(testa, crea('p', 'testo-messaggio', x.testo));
+    li.append(testa);
+    if (x.testo) li.append(crea('p', 'testo-messaggio', x.testo));
+    if (x.canto) li.append(schedaCantoPrivato(g, x, altro, mio, corretti));
     ul.append(li);
   }
   $('privati-vuoti').hidden = nostri.length > 0;
@@ -2706,7 +2833,7 @@ async function eliminaPrivato(x) {
     [{ valore: 'si', testo: 'Elimina', pericolo: true }]);
   if (!scelta) return;
   try {
-    await Gruppi.eliminaPrivato(x.id);
+    await Gruppi.eliminaPrivato(x);
     mostraMessaggi();
   } catch (err) {
     avviso('⚠ ' + err.message);
@@ -2714,6 +2841,7 @@ async function eliminaPrivato(x) {
 }
 
 async function azioniSuPrivato(x, altro) {
+  if (!x.testo && x.canto) x = { ...x, testo: '♪ ' + x.canto.titolo }; // per la segnalazione
   const scelta = await chiediScelta('Messaggio di ' + altro.nome,
     [{ valore: 'segnala', testo: '⚑ Segnala questo messaggio' }, { valore: 'blocca', testo: '🚫 Blocca ' + altro.nome, pericolo: true }]);
   if (!scelta) return;
@@ -2757,11 +2885,33 @@ testoPrivato.addEventListener('input', adattaCasellaPrivato);
 testoPrivato.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('scrivi-privato').requestSubmit();
 });
+$('btn-canto-privato').addEventListener('click', async () => {
+  const g = gruppoCorrente;
+  const con = conversazioneCon;
+  if (!g || !con) return;
+  const id = await scegliCanto('Quale canto vuoi mandare?');
+  if (!id) return;
+  const pulsante = $('btn-canto-privato');
+  pulsante.disabled = true;
+  try {
+    // l'eventuale testo scritto parte insieme al canto
+    await Gruppi.scriviPrivato(g.id, con, testoPrivato.value.trim(), id, (t) => avviso(t));
+    testoPrivato.value = '';
+    adattaCasellaPrivato();
+    avviso('Canto mandato.');
+    await mostraMessaggi(true);
+  } catch (err) {
+    avviso('⚠ ' + (navigator.onLine ? err.message : 'Senza internet il canto non parte.'));
+  } finally {
+    pulsante.disabled = false;
+  }
+});
+
 $('scrivi-privato').addEventListener('submit', async (e) => {
   e.preventDefault();
   const testo = testoPrivato.value.trim();
   if (!testo || !conversazioneCon || !gruppoCorrente) return;
-  const invia = e.target.querySelector('button');
+  const invia = e.target.querySelector('button[type="submit"]');
   invia.disabled = true;
   try {
     await Gruppi.scriviPrivato(gruppoCorrente.id, conversazioneCon, testo);

@@ -322,11 +322,47 @@ const Gruppi = {
     ]);
     return righe.filter((m) => !nascosti.persone.has(m.da) && !nascosti.canti.has(m.id)).reverse();
   },
-  async scriviPrivato(gruppoId, a, testo) {
-    await conMessaggio(Sync.client.from('messaggi_privati').insert({ gruppo_id: gruppoId, da: Sync.utente.id, a, testo }));
-    Notifiche.invia(gruppoId, 'privato', testo, a);
+  // cantoId: se c'è, il messaggio porta con sé quel canto (con i suoi file).
+  // I file vanno nel MIO spazio (allegati/<io>/privati/<messaggio>/…): li può leggere solo chi li riceve.
+  async scriviPrivato(gruppoId, a, testo, cantoId = null, avanzamento = () => {}) {
+    const id = nuovoId();
+    let canto = null;
+    const caricati = [];
+    try {
+      if (cantoId) {
+        const mio = await Db.canto(cantoId);
+        const files = (await Db.allegati(cantoId)).filter((x) => x.dati);
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+          avanzamento('Invio dei file: ' + (i + 1) + ' di ' + files.length + '…');
+          const percorso = Sync.utente.id + '/privati/' + id + '/' + f.id;
+          const tipo = f.mime || 'application/octet-stream';
+          const { error } = await Sync.client.storage.from(BUCKET_FILE)
+            .upload(percorso, new Blob([f.dati], { type: tipo }), { contentType: tipo });
+          if (error) throw new Error(spiegaErroreGruppi(error));
+          caricati.push({ id: f.id, nome: f.nome, tipo: f.tipo, mime: f.mime || null, percorso, bucket: BUCKET_FILE });
+        }
+        canto = { titolo: mio.titolo, testo: mio.testo || '', allegati: caricati };
+      }
+      await conMessaggio(Sync.client.from('messaggi_privati').insert({ id, gruppo_id: gruppoId, da: Sync.utente.id, a, testo, canto }));
+    } catch (err) {
+      if (caricati.length) await Sync.client.storage.from(BUCKET_FILE).remove(caricati.map((f) => f.percorso));
+      throw err;
+    }
+    Notifiche.invia(gruppoId, 'privato', testo || '♪ ' + canto.titolo, a);
   },
-  eliminaPrivato: (id) => conMessaggio(Sync.client.from('messaggi_privati').delete().eq('id', id)),
+  async eliminaPrivato(m) {
+    await conMessaggio(Sync.client.from('messaggi_privati').delete().eq('id', m.id));
+    const percorsi = ((m.canto && m.canto.allegati) || []).map((f) => f.percorso);
+    if (percorsi.length) await Sync.client.storage.from(BUCKET_FILE).remove(percorsi);
+  },
+
+  // Scarica un file di un canto condiviso (nel gruppo o in privato)
+  async scaricaFile(f) {
+    const { data, error } = await Sync.client.storage.from(f.bucket || BUCKET_CONDIVISI).download(f.percorso);
+    if (error) throw new Error(spiegaErroreGruppi(error));
+    return data;
+  },
   segnaLetti: (gruppoId, persona) => Sync.client.rpc('segna_letti', { gruppo: gruppoId, persona }),
   // Segnala un messaggio privato (se ne salva una copia per chi controlla le segnalazioni)
   async segnalaPrivato(m, autore, motivo) {
@@ -355,20 +391,38 @@ const Gruppi = {
     const { data, error } = await Sync.client.from('correzioni').select('libretto_id,allegato_id,segni').eq('gruppo_id', gruppoId);
     return error ? [] : data;
   },
-  async correzioniDi(librettoId) {
-    const { data, error } = await Sync.client.from('correzioni').select('allegato_id,segni').eq('libretto_id', librettoId);
+  // origine: { tipo: 'libretto' | 'condivisione' | 'privato', rif: id del canto nel libretto,
+  //            della condivisione o del messaggio privato }
+  _correzioniDove(origine) {
+    return origine.tipo === 'libretto'
+      ? Sync.client.from('correzioni').select('allegato_id,segni').eq('libretto_id', origine.rif)
+      : Sync.client.from('correzioni_canti').select('allegato_id,segni').eq('tipo', origine.tipo).eq('rif', origine.rif);
+  },
+  async correzioniDi(origine) {
+    const { data, error } = await this._correzioniDove(origine);
     if (error) return null;
     return Object.fromEntries(data.map((c) => [c.allegato_id, c.segni || []]));
   },
-  salvaCorrezioni: (gruppoId, librettoId, allegatoId, segni) =>
-    conMessaggio(Sync.client.from('correzioni').upsert({ gruppo_id: gruppoId, libretto_id: librettoId, allegato_id: allegatoId, segni })),
+  salvaCorrezioni: (gruppoId, origine, allegatoId, segni) =>
+    conMessaggio(origine.tipo === 'libretto'
+      ? Sync.client.from('correzioni').upsert({ gruppo_id: gruppoId, libretto_id: origine.rif, allegato_id: allegatoId, segni })
+      : Sync.client.from('correzioni_canti').upsert({ gruppo_id: gruppoId, tipo: origine.tipo, rif: origine.rif, allegato_id: allegatoId, segni })),
   // Le correzioni "in diretta" mentre si guarda un canto: quandoCambia(riga) a ogni modifica
-  ascoltaCorrezioni(librettoId, quandoCambia) {
-    const canale = Sync.client.channel('correzioni-' + librettoId)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'correzioni', filter: `libretto_id=eq.${librettoId}` },
-        (cambio) => quandoCambia(cambio.new && cambio.new.allegato_id ? cambio.new : null))
+  ascoltaCorrezioni(origine, quandoCambia) {
+    const libretto = origine.tipo === 'libretto';
+    const canale = Sync.client.channel('correzioni-' + origine.tipo + '-' + origine.rif)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: libretto ? 'correzioni' : 'correzioni_canti',
+        filter: libretto ? `libretto_id=eq.${origine.rif}` : `rif=eq.${origine.rif}`,
+      }, (cambio) => quandoCambia(cambio.new && cambio.new.allegato_id ? cambio.new : null))
       .subscribe();
     return () => Sync.client.removeChannel(canale);
+  },
+  // I canti condivisi (o mandati in privato) di un gruppo che hanno delle correzioni
+  async cantiCorretti(gruppoId) {
+    const { data, error } = await Sync.client.from('correzioni_canti').select('rif,segni').eq('gruppo_id', gruppoId);
+    if (error) return new Set();
+    return new Set(data.filter((c) => c.segni && c.segni.length).map((c) => c.rif));
   },
 
   // Manda un canto nel gruppo: prima carico i file, poi il messaggio.
@@ -427,8 +481,7 @@ const Gruppi = {
     for (let i = 0; i < lista.length; i++) {
       const f = lista[i];
       avanzamento(`Scarico i file: ${i + 1} di ${lista.length}…`);
-      const { data, error } = await Sync.client.storage.from(BUCKET_CONDIVISI).download(f.percorso);
-      if (error) throw new Error(spiegaErroreGruppi(error));
+      const data = await this.scaricaFile(f);
       files.push({ ...f, file: new File([data], f.nome, { type: f.mime || data.type || '' }) });
     }
     const cantoId = await Db.aggiungiCanto({

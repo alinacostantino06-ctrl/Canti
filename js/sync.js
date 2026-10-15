@@ -210,7 +210,9 @@ const Sync = {
     clearTimeout(this._timer);
     const uid = this.utente.id;
 
-    // 1. i file dei miei canti
+    // 1. i file dei canti che ho mandato in privato, poi quelli dei miei canti
+    const { data: privati } = await this.client.storage.from(BUCKET_FILE).list(uid + '/privati', { limit: 1000 });
+    for (const cartella of privati || []) await this._svuotaCartella(BUCKET_FILE, uid + '/privati/' + cartella.name);
     await this._svuotaCartella(BUCKET_FILE, uid);
 
     // 2. i file che ho condiviso nei gruppi, e tutti quelli dei gruppi che ho creato
@@ -254,8 +256,9 @@ const Sync = {
     for (let giro = 0; giro < 100; giro++) {
       const { data, error } = await this.client.storage.from(bucket).list(cartella, { limit: 100 });
       if (error) throw error;
-      if (!data || !data.length) return;
-      const { error: errTogli } = await this.client.storage.from(bucket).remove(data.map((f) => `${cartella}/${f.name}`));
+      const files = (data || []).filter((f) => f.id); // (le sottocartelle non hanno id)
+      if (!files.length) return;
+      const { error: errTogli } = await this.client.storage.from(bucket).remove(files.map((f) => `${cartella}/${f.name}`));
       if (errTogli) throw errTogli;
     }
   },

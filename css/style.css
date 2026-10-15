@@ -1418,3 +1418,19 @@ body.correggendo #schermata-canto { padding-bottom: 9rem; }
 .stato-correzioni { flex: 2; color: var(--tenue); font-size: 0.72rem; text-align: center; }
 .barra-correzioni .punta { box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(0, 0, 0, 0.35); }
 #dialogo-voci .dettaglio { color: var(--tenue); font-size: 0.85rem; font-weight: 400; }
+
+/* Pulsante ♪ per mandare un canto in un messaggio privato */
+.btn-allega {
+  flex: none;
+  width: 2.6rem;
+  height: 2.6rem;
+  border: 1px solid var(--oro);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--titoli);
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+.btn-allega:disabled { opacity: 0.5; }
+.privati .scheda-canto { margin-top: 0.2rem; }
+.scrivi-avviso textarea { min-width: 0; }
